@@ -36,3 +36,4 @@ See `ARCHITECTURE.md`, `THREAT_MODEL.md`, `USERS.md`.
 ## License
 
 MIT.
+
