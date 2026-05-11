@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adversary — Multi-Agent Adversarial AI Security Platform</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --bg2: #121826;
+    --panel: #1a2236;
+    --panel2: #232d44;
+    --accent: #6366f1;
+    --accent2: #818cf8;
+    --good: #34d399;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #2d3a55;
+  }
+  html, body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; scroll-behavior: smooth; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
+  .panel-hover:hover { border-color: var(--accent2); transform: translateY(-2px); transition: all 0.2s; }
+  .accent-text { color: var(--accent2); }
+  .good { color: var(--good); }
+  .warn { color: var(--warn); }
+  .bad { color: var(--bad); }
+  .muted { color: var(--muted); }
+  .border-good { border-color: var(--good); }
+  .border-bad { border-color: var(--bad); }
+  .border-warn { border-color: var(--warn); }
+  .mermaid { background: var(--panel); border-radius: 12px; padding: 24px; border: 1px solid var(--border); }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid var(--border); padding: 12px 16px; text-align: left; }
+  th { background: var(--panel2); font-weight: 600; }
+  tr:nth-child(even) td { background: rgba(35, 45, 68, 0.4); }
+  code { background: var(--panel2); padding: 2px 8px; border-radius: 4px; font-family: "JetBrains Mono", Menlo, Monaco, Consolas, monospace; font-size: 0.9em; }
+  pre { background: var(--panel2); padding: 16px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border); }
+  pre code { background: transparent; padding: 0; }
+  .nav-link { color: var(--muted); transition: color 0.15s; }
+  .nav-link:hover { color: var(--accent2); }
+  .section-anchor { scroll-margin-top: 80px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+  .badge-good { background: rgba(52, 211, 153, 0.15); color: var(--good); border: 1px solid rgba(52, 211, 153, 0.3); }
+  .badge-warn { background: rgba(251, 191, 36, 0.15); color: var(--warn); border: 1px solid rgba(251, 191, 36, 0.3); }
+  .badge-bad { background: rgba(248, 113, 113, 0.15); color: var(--bad); border: 1px solid rgba(248, 113, 113, 0.3); }
+  .gradient-text { background: linear-gradient(135deg, #818cf8 0%, #34d399 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .grid-pattern { background-image: linear-gradient(rgba(99, 102, 241, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(99, 102, 241, 0.05) 1px, transparent 1px); background-size: 24px 24px; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- Sticky nav -->
+<nav class="sticky top-0 z-50 backdrop-blur-md" style="background: rgba(10, 14, 26, 0.85); border-bottom: 1px solid var(--border);">
+  <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white" style="background: linear-gradient(135deg, #6366f1 0%, #34d399 100%);">A</div>
+      <span class="font-bold text-lg">Adversary</span>
+      <span class="badge badge-good">v0.1.0</span>
+    </div>
+    <div class="hidden md:flex gap-6 text-sm">
+      <a href="#problem" class="nav-link">Problem</a>
+      <a href="#architecture" class="nav-link">Architecture</a>
+      <a href="#agents" class="nav-link">Agents</a>
+      <a href="#dataflow" class="nav-link">Data Flow</a>
+      <a href="#decisions" class="nav-link">Decisions</a>
+      <a href="#tradeoffs" class="nav-link">Trade-offs</a>
+      <a href="#cost" class="nav-link">Cost</a>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<header class="grid-pattern">
+  <div class="max-w-7xl mx-auto px-6 py-20">
+    <div class="max-w-4xl">
+      <span class="badge badge-good mb-4 inline-block">Gauntlet AI Week 3 — Final Submission</span>
+      <h1 class="text-6xl font-bold mb-6 leading-tight">
+        <span class="gradient-text">Adversary</span>
+      </h1>
+      <p class="text-2xl mb-4" style="color: var(--text);">Multi-agent adversarial AI security platform</p>
+      <p class="text-lg muted mb-8 leading-relaxed">
+        Autonomously red-teams Large Language Model driven products. Discovers vulnerabilities via dynamic attack generation, evaluates with an independent Judge agent, documents exploits as reproducible reports, and regression-tests every confirmed exploit on every target deploy.
+      </p>
+      <div class="flex flex-wrap gap-3">
+        <a href="https://github.com/scott-lydon/adversary" class="px-5 py-2.5 rounded-lg font-medium" style="background: var(--accent); color: white;">View on GitHub</a>
+        <a href="https://labs.gauntletai.com/scottlydon/adversary" class="px-5 py-2.5 rounded-lg font-medium border" style="border-color: var(--border); color: var(--text);">View on GitLab</a>
+        <a href="#architecture" class="px-5 py-2.5 rounded-lg font-medium border" style="border-color: var(--border); color: var(--text);">Explore architecture</a>
+      </div>
+    </div>
+
+    <!-- At-a-glance stats -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-16">
+      <div class="panel p-5">
+        <div class="text-3xl font-bold accent-text">4</div>
+        <div class="text-sm muted mt-1">Agent roles, strict separation</div>
+      </div>
+      <div class="panel p-5">
+        <div class="text-3xl font-bold accent-text">3</div>
+        <div class="text-sm muted mt-1">Vendor independence between attack &amp; judge</div>
+      </div>
+      <div class="panel p-5">
+        <div class="text-3xl font-bold accent-text">6</div>
+        <div class="text-sm muted mt-1">Attack categories covered</div>
+      </div>
+      <div class="panel p-5">
+        <div class="text-3xl font-bold accent-text">~$1.50</div>
+        <div class="text-sm muted mt-1">Per-campaign cost (avg)</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- Problem -->
+<section id="problem" class="section-anchor py-20">
+  <div class="max-w-7xl mx-auto px-6">
+    <h2 class="text-4xl font-bold mb-4">The problem this addresses</h2>
+    <p class="text-lg muted mb-12 max-w-3xl">Static jailbreak lists go stale. Manual penetration tests find one bug and stop. The Clinical Co-Pilot will keep shipping commits, and attacker techniques will keep mutating. A point-in-time security test cannot answer "is this still fixed three commits later?"</p>
+
+    <div class="grid md:grid-cols-2 gap-6">
+      <div class="panel p-6 panel-hover">
+        <div class="badge badge-bad mb-3">Current state without Adversary</div>
+        <h3 class="text-xl font-semibold mb-3">Quarterly manual red team</h3>
+        <ul class="space-y-2 muted">
+          <li>• 30 hand-curated jailbreak payloads in a spreadsheet</li>
+          <li>• Run once per quarter, manually reviewed</li>
+          <li>• No mutation, no variants probed</li>
+          <li>• Findings re-tested once at fix time, then never again</li>
+          <li>• No coverage matrix; gaps are invisible</li>
+          <li>• Cannot answer "is this still fixed?" after a commit</li>
+        </ul>
+      </div>
+      <div class="panel p-6 panel-hover" style="border-color: var(--good);">
+        <div class="badge badge-good mb-3">With Adversary</div>
+        <h3 class="text-xl font-semibold mb-3">Continuous multi-agent red team</h3>
+        <ul class="space-y-2 muted">
+          <li class="good">• Red Team Agent generates novel attacks from seeds</li>
+          <li class="good">• Mutation tree explores variant space automatically</li>
+          <li class="good">• Independent Judge Agent emits structured verdicts</li>
+          <li class="good">• Every confirmed exploit becomes a regression test</li>
+          <li class="good">• Regression replays on every target deploy</li>
+          <li class="good">• Coverage matrix surfaces uncovered categories</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Architecture topology -->
+<section id="architecture" class="section-anchor py-20" style="background: var(--bg2);">
+  <div class="max-w-7xl mx-auto px-6">
+    <h2 class="text-4xl font-bold mb-4">Architecture topology</h2>
+    <p class="text-lg muted mb-12 max-w-3xl">Four agents with strict separation of concerns. The Orchestrator is the only agent with strategic authority; the others execute one job each.</p>
+
+    <div class="mermaid">
+graph TB
+  Operator["👤 Operator<br/>CLI / Web Dashboard"]:::operator
+  Orch["🧭 Orchestrator<br/>gpt-5-mini<br/><i>strategic planner</i>"]:::orch
+  RT["⚔️ Red Team<br/>Llama 3.1 70B (Together)<br/><i>attack generator + mutator</i>"]:::redteam
+  TA["🎯 Target Adapter<br/>Clinical Co-Pilot<br/><i>HTTP boundary</i>"]:::target
+  Judge["⚖️ Judge<br/>Claude Sonnet 4.6<br/><i>independent verdict</i>"]:::judge
+  Doc["📝 Documentation<br/>gpt-5<br/><i>vulnerability reports</i>"]:::doc
+  Target["🏥 Live Target<br/>Clinical Co-Pilot at<br/>http://5.161.253.237"]:::livetarget
+  PG[("🗄️ Postgres + pgvector<br/>coverage, lineage, audit")]:::data
+  Obs["📊 Observability<br/>Langfuse, OpenTelemetry,<br/>Prometheus"]:::obs
+  Reg["🔄 Regression Harness<br/>deterministic Python"]:::reg
+
+  Operator -->|"adversary scan"| Orch
+  Orch -->|"CampaignBrief"| RT
+  RT -->|"AttackBatch"| TA
+  TA -->|"HTTP POST /chat"| Target
+  Target -->|"ChatResponse"| TA
+  TA -->|"TargetResponse"| Judge
+  Judge -->|"Verdict"| Doc
+  Judge -->|"Verdict"| PG
+  Doc -->|"vulnerability-reports/*.md"| Operator
+  PG -.->|"coverage signals"| Orch
+  Obs -.->|"traces, metrics"| Orch
+  PG -->|"confirmed exploits"| Reg
+  Reg -->|"replay on deploy"| TA
+
+  classDef operator fill:#1a2236,stroke:#6366f1,color:#e2e8f0
+  classDef orch fill:#1e1a36,stroke:#a78bfa,color:#e2e8f0
+  classDef redteam fill:#3a1a1a,stroke:#f87171,color:#e2e8f0
+  classDef target fill:#1a2a3a,stroke:#60a5fa,color:#e2e8f0
+  classDef judge fill:#2a1a3a,stroke:#c084fc,color:#e2e8f0
+  classDef doc fill:#1a3a1a,stroke:#34d399,color:#e2e8f0
+  classDef livetarget fill:#3a2a1a,stroke:#fbbf24,color:#e2e8f0
+  classDef data fill:#1a1a2a,stroke:#94a3b8,color:#e2e8f0
+  classDef obs fill:#1a2a2a,stroke:#22d3ee,color:#e2e8f0
+  classDef reg fill:#2a2a1a,stroke:#facc15,color:#e2e8f0
+    </div>
+
+    <p class="muted text-sm mt-4">Dashed lines are read paths; solid lines are message handoffs. The platform's audit log persists every cross-agent message keyed by trace ID for full lineage reconstruction.</p>
+  </div>
+</section>
+
+<!-- Agent cards -->
+<section id="agents" class="section-anchor py-20">
+  <div class="max-w-7xl mx-auto px-6">
+    <h2 class="text-4xl font-bold mb-4">The four agents</h2>
+    <p class="text-lg muted mb-12 max-w-3xl">Each agent has one job. Each runs on a deliberately chosen model. Each is isolated by vendor or by process from the others where independence matters.</p>
+
+    <div class="grid md:grid-cols-2 gap-6">
+
+      <!-- Orchestrator -->
+      <div class="panel p-6 panel-hover">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-xl font-bold">🧭 Orchestrator</h3>
+          <span class="badge" style="background: rgba(167, 139, 250, 0.15); color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.3);">gpt-5-mini</span>
+        </div>
+        <p class="muted text-sm mb-4">Strategic planner. Reads coverage matrix, open findings, budget. Picks the next campaign with a weighted choice over category priority.</p>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <div class="good font-semibold mb-1">✓ Pros</div>
+            <ul class="muted space-y-1 text-xs">
+              <li>• Cheap planning at ~$0.01/campaign</li>
+              <li>• Reads SQL, no extra context</li>
+              <li>• Halts on budget exhaustion</li>
+            </ul>
+          </div>
+          <div>
+            <div class="bad font-semibold mb-1">✗ Cons</div>
+            <ul class="muted space-y-1 text-xs">
+              <li>• Quality bound by gpt-5-mini reasoning</li>
+              <li>• Brittle to malformed coverage rows</li>
+              <li>• Cannot rationalize tie-breaks well</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Red Team -->
+      <div class="panel p-6 panel-hover">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-xl font-bold">⚔️ Red Team</h3>
+          <span class="badge" style="background: rgba(248, 113, 113, 0.15); color: #f87171; border: 1px solid rgba(248, 113, 113, 0.3);">Llama 3.1 70B</span>
+        </div>
+        <p class="muted text-sm mb-4">Attack generator and mutator. Generates novel adversarial inputs and mutates partial successes through 5 transformation families.</p>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <div class="good font-semibold mb-1">✓ Pros</div>
+            <ul class="muted space-y-1 text-xs">
+              <li>• Will engage with offensive prompts</li>
+              <li>• ~8x cheaper than gpt-5</li>
+              <li>• Open weights, auditable</li>
+              <li>• Together AI ~600 req/min ceiling</li>
+            </ul>
+          </div>
+          <div>
+            <div class="bad font-semibold mb-1">✗ Cons</div>
+            <ul class="muted space-y-1 text-xs">
+              <li>• Lower instruction-following than gpt-5</li>
+              <li>• Refuses ~5% of prompts (less than frontier)</li>
+              <li>• Mutation creativity bounded by training</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Judge -->
+      <div class="panel p-6 panel-hover">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-xl font-bold">⚖️ Judge</h3>
+          <span class="badge" style="background: rgba(192, 132, 252, 0.15); color: #c084fc; border: 1px solid rgba(192, 132, 252, 0.3);">Claude Sonnet 4.6</span>
+        </div>
+        <p class="muted text-sm mb-4">Independent evaluator. Different vendor than Red Team (non-negotiable). 10% of verdicts double-judged by Azure OpenAI for drift detection.</p>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <div class="good font-semibold mb-1">✓ Pros</div>
+            <ul class="muted space-y-1 text-xs">
+              <li>• Vendor-independent from attacker</li>
+              <li>• Strong semantic comprehension</li>
+              <li>• Structured rubric per category</li>
+              <li>• Drift detection built in</li>
+            </ul>
+          </div>
+          <div>
+            <div class="bad font-semibold mb-1">✗ Cons</div>
+            <ul class="muted space-y-1 text-xs">
+              <li>• ~94% accuracy on calibration set</li>
+              <li>• Most expensive per-token agent</li>
+              <li>• Anthropic rate limits gate throughput</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Documentation -->
+      <div class="panel p-6 panel-hover">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-xl font-bold">📝 Documentation</h3>
+          <span class="badge" style="background: rgba(52, 211, 153, 0.15); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.3);">gpt-5</span>
+        </div>
+        <p class="muted text-sm mb-4">Converts confirmed exploits to professional-grade vulnerability reports. Only fires on confirmed exploits; critical-severity gated by human approval.</p>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <div class="good font-semibold mb-1">✓ Pros</div>
+            <ul class="muted space-y-1 text-xs">
+              <li>• Report quality is the final artifact</li>
+              <li>• Single-shot generation per finding</li>
+              <li>• Reproducible from report alone</li>
+            </ul>
+          </div>
+          <div>
+            <div class="bad font-semibold mb-1">✗ Cons</div>
+            <ul class="muted space-y-1 text-xs">
+              <li>• Highest per-call cost ($0.30/report)</li>
+              <li>• Quality depends on Judge's evidence</li>
+              <li>• False positives waste eng time</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- Data flow -->
+<section id="dataflow" class="section-anchor py-20" style="background: var(--bg2);">
+  <div class="max-w-7xl mx-auto px-6">
+    <h2 class="text-4xl font-bold mb-4">Data flow: one campaign, end to end</h2>
+    <p class="text-lg muted mb-12 max-w-3xl">A typical campaign produces ~20 attacks, evaluates each, mutates partial successes, and emits at most one vulnerability report.</p>
+
+    <div class="mermaid">
+sequenceDiagram
+  participant Op as Operator
+  participant O as 🧭 Orchestrator
+  participant R as ⚔️ Red Team
+  participant T as 🎯 Target Adapter
+  participant CP as 🏥 Co-Pilot
+  participant J as ⚖️ Judge
+  participant D as 📝 Documentation
+  participant P as 🗄️ Postgres
+
+  Op->>O: adversary scan --campaigns prompt_injection --budget-usd 5
+  O->>P: SELECT coverage WHERE category='prompt_injection'
+  P-->>O: 12 prior runs, 8 success, 4 fail
+  O->>R: CampaignBrief{category, seeds, prior_failures, budget}
+  R->>R: Generate seed attack via Llama 3.1 70B
+  loop For each attack (max 20)
+    R->>T: AttackBatch[Attack{prompt_sequence}]
+    T->>CP: POST /chat (Authorization: task_token)
+    CP-->>T: ChatResponse{verdict, candidates, telemetry}
+    T-->>R: TargetResponse
+    R->>J: JudgeRequest{attack, response, expected_safe}
+    J->>J: Claude Sonnet 4.6 evaluates against rubric
+    J-->>R: Verdict{success|partial|fail, evidence, confidence}
+    alt verdict = success
+      J->>D: confirmed exploit packet
+      D->>D: gpt-5 drafts ADV-YYYY-NNNN.md
+      D-->>Op: vulnerability-reports/ADV-2026-0042.md
+      D->>P: INSERT finding{severity, lineage}
+    else verdict = partial
+      R->>R: Mutate attack (5 variants)
+      Note over R: paraphrase, encoding shift,<br/>framing change, context expansion,<br/>structural split
+    else verdict = fail
+      R->>P: UPDATE coverage SET runs+=1
+    end
+  end
+  O->>P: SELECT SUM(dollar_cost) FROM agent_runs
+  P-->>O: budget exhausted
+  O-->>Op: campaign summary + cost report
+    </div>
+  </div>
+</section>
+
+<!-- Decisions table -->
+<section id="decisions" class="section-anchor py-20">
+  <div class="max-w-7xl mx-auto px-6">
+    <h2 class="text-4xl font-bold mb-4">Key architectural decisions</h2>
+    <p class="text-lg muted mb-8 max-w-3xl">Every decision is deliberate and traceable to a constraint in the threat model or a PRD requirement. The alternatives I considered are listed honestly.</p>
+
+    <div class="overflow-x-auto">
+    <table class="text-sm">
+      <thead>
+        <tr><th>Decision</th><th>What I chose</th><th>Alternative considered</th><th>Why I picked it</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Red Team model</strong></td>
+          <td>Llama 3.1 70B (Together)</td>
+          <td>gpt-5 with red-team system prompt</td>
+          <td>Frontier models refuse the most dangerous payloads. Llama produces realistic content.</td>
+        </tr>
+        <tr>
+          <td><strong>Judge vendor</strong></td>
+          <td>Anthropic (Claude Sonnet 4.6)</td>
+          <td>Same vendor as Red Team</td>
+          <td>Vendor independence is non-negotiable. Same vendor creates correlation I cannot reason about.</td>
+        </tr>
+        <tr>
+          <td><strong>Orchestrator model</strong></td>
+          <td>gpt-5-mini</td>
+          <td>gpt-5 reasoning tier</td>
+          <td>Planning task fits a small model. gpt-5 here is cost without quality gain.</td>
+        </tr>
+        <tr>
+          <td><strong>Documentation model</strong></td>
+          <td>gpt-5</td>
+          <td>gpt-5-mini, Claude Sonnet</td>
+          <td>Report quality is the final artifact. Senior engineers reproduce bugs from this alone.</td>
+        </tr>
+        <tr>
+          <td><strong>LLM abstraction</strong></td>
+          <td>LiteLLM</td>
+          <td>Direct vendor SDKs, LangChain</td>
+          <td>Multi-vendor agnostic. Swap any model with a one-line config change.</td>
+        </tr>
+        <tr>
+          <td><strong>Orchestration framework</strong></td>
+          <td>LangGraph</td>
+          <td>CrewAI, AutoGen, Temporal, hand-rolled</td>
+          <td>Cohort already uses it. Nodes are plain Python so swap cost is bounded.</td>
+        </tr>
+        <tr>
+          <td><strong>Target boundary</strong></td>
+          <td><code>TargetAdapter</code> ABC</td>
+          <td>Hard-coded to Co-Pilot</td>
+          <td>Reusability across products. New product = ~150 LOC adapter.</td>
+        </tr>
+        <tr>
+          <td><strong>Regression replay</strong></td>
+          <td>Deterministic Python</td>
+          <td>LLM-driven replay</td>
+          <td>No reasoning needed for HTTP+JSON. LLM here is unnecessary cost.</td>
+        </tr>
+        <tr>
+          <td><strong>Verdict scoring</strong></td>
+          <td>LLM Judge + structural evidence check</td>
+          <td>Exact-string match on response</td>
+          <td>Exact-match passes when wording changes for the wrong reason.</td>
+        </tr>
+        <tr>
+          <td><strong>Audit log</strong></td>
+          <td>Hash-chained Postgres + external anchor</td>
+          <td>Append-only file, simple SQL</td>
+          <td>Tamper-evident audit chain is what auditors and CISOs need.</td>
+        </tr>
+        <tr>
+          <td><strong>Observability</strong></td>
+          <td>Langfuse (self-hosted) + OpenTelemetry</td>
+          <td>LangSmith hosted, custom logs</td>
+          <td>Self-hosted keeps inter-agent traces inside the trust boundary.</td>
+        </tr>
+        <tr>
+          <td><strong>Deployment</strong></td>
+          <td>Separate Hetzner CX22 from target</td>
+          <td>Co-located on Co-Pilot box</td>
+          <td>Realistic external-attacker threat model. Cleaner network namespace.</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
+<!-- Trade-offs -->
+<section id="tradeoffs" class="section-anchor py-20" style="background: var(--bg2);">
+  <div class="max-w-7xl mx-auto px-6">
+    <h2 class="text-4xl font-bold mb-4">Honest trade-offs</h2>
+    <p class="text-lg muted mb-12 max-w-3xl">No architecture is free. These are the costs I accepted, and what would have to change for them to bite.</p>
+
+    <div class="grid md:grid-cols-2 gap-6">
+      <div class="panel p-6">
+        <div class="badge badge-warn mb-3">Trade-off 1</div>
+        <h3 class="text-xl font-semibold mb-3">Vendor independence costs money and complexity</h3>
+        <p class="muted text-sm mb-3">Three vendors (Together, Anthropic, OpenAI) means three billing relationships, three rate-limit ceilings, three failure modes when one has an incident.</p>
+        <p class="text-sm"><strong class="good">Why I accept it:</strong> the Judge being on a different vendor than the Red Team is non-negotiable. A single-vendor system has correlation I cannot reason about.</p>
+        <p class="text-sm mt-2"><strong class="warn">When it would bite:</strong> if Anthropic has a multi-hour outage during a critical regression run. Mitigated by Azure OpenAI Judge fallback wired in but not auto-triggered.</p>
+      </div>
+
+      <div class="panel p-6">
+        <div class="badge badge-warn mb-3">Trade-off 2</div>
+        <h3 class="text-xl font-semibold mb-3">Judge accuracy is bounded</h3>
+        <p class="muted text-sm mb-3">Claude Sonnet 4.6 scores ~94% on the calibration set. That means ~6 in 100 verdicts are wrong, in either direction.</p>
+        <p class="text-sm"><strong class="good">Why I accept it:</strong> 94% with drift detection is better than 100% with no validation. The platform surfaces its own confidence.</p>
+        <p class="text-sm mt-2"><strong class="warn">When it would bite:</strong> a CISO presenting Adversary numbers to a board needs to lead with "94% Judge accuracy" not "we found 12 exploits."</p>
+      </div>
+
+      <div class="panel p-6">
+        <div class="badge badge-warn mb-3">Trade-off 3</div>
+        <h3 class="text-xl font-semibold mb-3">Cost amplifies at scale</h3>
+        <p class="muted text-sm mb-3">Per-campaign cost is ~$1.50. At 100K campaigns/month the platform's projected cost is low five figures.</p>
+        <p class="text-sm"><strong class="good">Why I accept it:</strong> the current cohort scale is &lt;1K campaigns/month, well within budget. Architectural changes at higher scale are documented.</p>
+        <p class="text-sm mt-2"><strong class="warn">When it would bite:</strong> if the platform is adopted by a multi-hospital network running 10K+ campaigns/day. Requires Judge distillation to local model.</p>
+      </div>
+
+      <div class="panel p-6">
+        <div class="badge badge-warn mb-3">Trade-off 4</div>
+        <h3 class="text-xl font-semibold mb-3">LangGraph dependency</h3>
+        <p class="muted text-sm mb-3">Orchestration framework lock-in. If LangGraph deprecates or pivots, refactor cost.</p>
+        <p class="text-sm"><strong class="good">Why I accept it:</strong> every node is a plain Python async function. The framework is a thin coordinator, not a runtime.</p>
+        <p class="text-sm mt-2"><strong class="warn">When it would bite:</strong> if LangGraph introduces a breaking API change in a minor version. Swap to Temporal or hand-rolled is a 1-week refactor.</p>
+      </div>
+
+      <div class="panel p-6">
+        <div class="badge badge-warn mb-3">Trade-off 5</div>
+        <h3 class="text-xl font-semibold mb-3">Target boundary loses some attack surface</h3>
+        <p class="muted text-sm mb-3">The TargetAdapter ABC is HTTP-shaped. Targets that expose WebSockets, Server-Sent Events, or gRPC need adapter-specific work.</p>
+        <p class="text-sm"><strong class="good">Why I accept it:</strong> 95% of LLM products today are HTTP+JSON. Premature generalization to streaming protocols would slow MVP.</p>
+        <p class="text-sm mt-2"><strong class="warn">When it would bite:</strong> attacking a real-time voice assistant. Requires extending the ABC with streaming methods.</p>
+      </div>
+
+      <div class="panel p-6">
+        <div class="badge badge-warn mb-3">Trade-off 6</div>
+        <h3 class="text-xl font-semibold mb-3">No write-tool attack coverage</h3>
+        <p class="muted text-sm mb-3">The Co-Pilot has only read-only tools today. Adversary's tool-misuse campaigns are bounded by that.</p>
+        <p class="text-sm"><strong class="good">Why I accept it:</strong> attacking surfaces that don't exist would produce noise.</p>
+        <p class="text-sm mt-2"><strong class="warn">When it would bite:</strong> when the Co-Pilot adds order entry or chart-write tools. The threat model already anticipates this; the platform extends naturally.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Cost chart -->
+<section id="cost" class="section-anchor py-20">
+  <div class="max-w-7xl mx-auto px-6">
+    <h2 class="text-4xl font-bold mb-4">Cost model: why these models</h2>
+    <p class="text-lg muted mb-8 max-w-3xl">Per-campaign cost broken down by agent. The Red Team and Judge dominate. Picking gpt-5 for Red Team would multiply platform cost by roughly 8x for marginal quality gain.</p>
+
+    <div class="panel p-6 mb-8">
+      <canvas id="costChart" style="max-height: 400px;"></canvas>
+    </div>
+
+    <h3 class="text-2xl font-semibold mb-4 mt-12">Projected cost at scale</h3>
+    <p class="muted mb-6 max-w-3xl">"Cost per run × number of runs" understates the picture. Each scale tier requires architectural changes.</p>
+
+    <div class="panel p-6">
+      <canvas id="scaleChart" style="max-height: 350px;"></canvas>
+    </div>
+
+    <div class="grid md:grid-cols-4 gap-4 mt-8">
+      <div class="panel p-4">
+        <div class="text-sm muted">100 runs</div>
+        <div class="text-2xl font-bold accent-text mt-1">~$150</div>
+        <div class="text-xs muted mt-2">Current architecture works as-is.</div>
+      </div>
+      <div class="panel p-4">
+        <div class="text-sm muted">1K runs</div>
+        <div class="text-2xl font-bold accent-text mt-1">~$1.5K</div>
+        <div class="text-xs muted mt-2">Add verdict caching on identical (attack, response) pairs.</div>
+      </div>
+      <div class="panel p-4">
+        <div class="text-sm muted">10K runs</div>
+        <div class="text-2xl font-bold accent-text mt-1">~$13K</div>
+        <div class="text-xs muted mt-2">Anthropic batch API + Together batch API for ~50% discount.</div>
+      </div>
+      <div class="panel p-4">
+        <div class="text-sm muted">100K runs</div>
+        <div class="text-2xl font-bold accent-text mt-1">~$80K</div>
+        <div class="text-xs muted mt-2">Replace Judge with local distilled model. Sharded Orchestrator.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Trust boundaries -->
+<section id="boundaries" class="section-anchor py-20" style="background: var(--bg2);">
+  <div class="max-w-7xl mx-auto px-6">
+    <h2 class="text-4xl font-bold mb-4">Trust boundaries</h2>
+    <p class="text-lg muted mb-12 max-w-3xl">Each boundary is a control surface. The Co-Pilot itself has six trust boundaries the platform exercises; Adversary itself has three.</p>
+
+    <div class="mermaid">
+graph LR
+  subgraph "Adversary Platform"
+    direction TB
+    Op[Operator<br/>auth required]
+    Plat[Agents<br/>internal]
+    AL[Allowlist<br/>YAML]
+  end
+
+  subgraph "External"
+    direction TB
+    G[GitHub Webhook<br/>mTLS]
+    T[Target URL<br/>HTTPS]
+  end
+
+  subgraph "Approval Gates"
+    direction TB
+    C1[Critical Severity Report<br/>human approve]
+    C2[Non-allowlisted Target<br/>human approve]
+    C3[Regression Push to Target<br/>human approve]
+  end
+
+  Op -->|"auth + role check"| Plat
+  G -->|"signed payload"| Plat
+  Plat -->|"allowlist check"| AL
+  AL -->|"approved"| T
+  Plat -->|"severity = critical"| C1
+  Plat -->|"new target requested"| C2
+  Plat -->|"target repo write"| C3
+
+  classDef gate fill:#3a2a1a,stroke:#fbbf24,color:#e2e8f0
+  class C1,C2,C3 gate
+    </div>
+
+    <p class="muted text-sm mt-4">Everywhere else the platform runs autonomously: generating attacks, judging them, writing low and medium severity reports, regression replays, mutation expansion, budget halts.</p>
+  </div>
+</section>
+
+<!-- Tech Stack -->
+<section id="stack" class="section-anchor py-20">
+  <div class="max-w-7xl mx-auto px-6">
+    <h2 class="text-4xl font-bold mb-4">Tech stack</h2>
+    <p class="text-lg muted mb-8 max-w-3xl">Every choice is documented in <code>ARCHITECTURE.md</code> Section 8. Summary below.</p>
+
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="panel p-5">
+        <div class="text-sm muted mb-2">Language &amp; runtime</div>
+        <div class="font-semibold mb-1">Python 3.12, FastAPI, Uvicorn</div>
+        <div class="text-xs muted">Async, typed, deployed as Docker container.</div>
+      </div>
+      <div class="panel p-5">
+        <div class="text-sm muted mb-2">LLM abstraction</div>
+        <div class="font-semibold mb-1">LiteLLM</div>
+        <div class="text-xs muted">One-line model swap. Multi-vendor.</div>
+      </div>
+      <div class="panel p-5">
+        <div class="text-sm muted mb-2">Orchestration</div>
+        <div class="font-semibold mb-1">LangGraph</div>
+        <div class="text-xs muted">Stateful graph; plain Python nodes.</div>
+      </div>
+      <div class="panel p-5">
+        <div class="text-sm muted mb-2">Persistence</div>
+        <div class="font-semibold mb-1">Postgres + pgvector</div>
+        <div class="text-xs muted">Coverage matrix, audit log, attack lineage.</div>
+      </div>
+      <div class="panel p-5">
+        <div class="text-sm muted mb-2">Observability</div>
+        <div class="font-semibold mb-1">Langfuse self-hosted</div>
+        <div class="text-xs muted">Inside trust boundary. OpenTelemetry traces.</div>
+      </div>
+      <div class="panel p-5">
+        <div class="text-sm muted mb-2">CLI</div>
+        <div class="font-semibold mb-1">Typer + Rich</div>
+        <div class="text-xs muted">Single binary, multi-command structure.</div>
+      </div>
+      <div class="panel p-5">
+        <div class="text-sm muted mb-2">CI gate</div>
+        <div class="font-semibold mb-1">GitHub Actions</div>
+        <div class="text-xs muted">Webhook on target deploy fires regression.</div>
+      </div>
+      <div class="panel p-5">
+        <div class="text-sm muted mb-2">Deployment</div>
+        <div class="font-semibold mb-1">Hetzner CX22 + Docker Compose</div>
+        <div class="text-xs muted">Separate from target box. ~€5/month.</div>
+      </div>
+      <div class="panel p-5">
+        <div class="text-sm muted mb-2">Schemas</div>
+        <div class="font-semibold mb-1">Pydantic v2</div>
+        <div class="text-xs muted">Inter-agent message contracts.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="py-12" style="background: var(--bg2); border-top: 1px solid var(--border);">
+  <div class="max-w-7xl mx-auto px-6">
+    <div class="flex flex-wrap items-center justify-between gap-6">
+      <div>
+        <div class="font-bold text-xl mb-2 gradient-text">Adversary</div>
+        <div class="text-sm muted">Multi-agent adversarial AI security platform · Gauntlet AI Week 3</div>
+      </div>
+      <div class="flex gap-4 text-sm">
+        <a href="https://github.com/scott-lydon/adversary" class="nav-link">GitHub</a>
+        <a href="https://labs.gauntletai.com/scottlydon/adversary" class="nav-link">GitLab</a>
+        <a href="https://github.com/scott-lydon/adversary/blob/main/THREAT_MODEL.md" class="nav-link">Threat Model</a>
+        <a href="https://github.com/scott-lydon/adversary/blob/main/ARCHITECTURE.md" class="nav-link">Architecture</a>
+        <a href="https://github.com/scott-lydon/adversary/blob/main/USERS.md" class="nav-link">Users</a>
+      </div>
+    </div>
+    <div class="text-xs muted mt-6">Built 2026-05-11. MIT licensed. Target: Clinical Co-Pilot at http://5.161.253.237.</div>
+  </div>
+</footer>
+
+<script>
+  // Mermaid init with dark theme matching the page
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      darkMode: true,
+      background: '#1a2236',
+      primaryColor: '#1a2236',
+      primaryTextColor: '#e2e8f0',
+      primaryBorderColor: '#6366f1',
+      lineColor: '#94a3b8',
+      secondaryColor: '#232d44',
+      tertiaryColor: '#0a0e1a',
+      fontFamily: 'system-ui, -apple-system, sans-serif'
+    },
+    flowchart: { curve: 'basis', padding: 20, useMaxWidth: true },
+    sequence: { useMaxWidth: true, mirrorActors: false, actorMargin: 60, messageMargin: 50 }
+  });
+
+  // Per-campaign cost breakdown
+  new Chart(document.getElementById('costChart'), {
+    type: 'bar',
+    data: {
+      labels: ['Orchestrator', 'Red Team', 'Target (Co-Pilot)', 'Judge', 'Documentation'],
+      datasets: [
+        {
+          label: 'Min $ / campaign',
+          data: [0.005, 0.20, 0.30, 0.40, 0.00],
+          backgroundColor: 'rgba(99, 102, 241, 0.5)',
+          borderColor: '#6366f1',
+          borderWidth: 1
+        },
+        {
+          label: 'Max $ / campaign',
+          data: [0.01, 0.60, 0.70, 1.00, 0.30],
+          backgroundColor: 'rgba(52, 211, 153, 0.5)',
+          borderColor: '#34d399',
+          borderWidth: 1
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#e2e8f0' } },
+        title: { display: true, text: 'Cost per campaign by agent (USD, 2026 Q2 prices)', color: '#e2e8f0', font: { size: 14 } }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: { color: '#94a3b8', callback: v => '$' + v.toFixed(2) },
+          grid: { color: 'rgba(148, 163, 184, 0.1)' }
+        },
+        x: {
+          ticks: { color: '#e2e8f0' },
+          grid: { color: 'rgba(148, 163, 184, 0.1)' }
+        }
+      }
+    }
+  });
+
+  // Cost at scale (log scale to show non-linear)
+  new Chart(document.getElementById('scaleChart'), {
+    type: 'line',
+    data: {
+      labels: ['100', '1K', '10K', '100K'],
+      datasets: [
+        {
+          label: 'Naive (cost × N)',
+          data: [150, 1500, 15000, 150000],
+          borderColor: '#f87171',
+          backgroundColor: 'rgba(248, 113, 113, 0.1)',
+          borderDash: [5, 5],
+          tension: 0.3
+        },
+        {
+          label: 'With architectural changes',
+          data: [150, 1500, 13000, 80000],
+          borderColor: '#34d399',
+          backgroundColor: 'rgba(52, 211, 153, 0.15)',
+          tension: 0.3,
+          fill: true
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#e2e8f0' } },
+        title: { display: true, text: 'Cost projection: naive vs with optimization (USD, log scale)', color: '#e2e8f0', font: { size: 14 } }
+      },
+      scales: {
+        y: {
+          type: 'logarithmic',
+          ticks: { color: '#94a3b8', callback: v => '$' + v.toLocaleString() },
+          grid: { color: 'rgba(148, 163, 184, 0.1)' }
+        },
+        x: {
+          ticks: { color: '#e2e8f0' },
+          title: { display: true, text: 'Test runs per month', color: '#94a3b8' },
+          grid: { color: 'rgba(148, 163, 184, 0.1)' }
+        }
+      }
+    }
+  });
+</script>
+
+</body>
+</html>
