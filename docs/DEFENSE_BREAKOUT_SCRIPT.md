@@ -9,53 +9,53 @@
 
 ## The 5-minute script
 
-### Frame (20 seconds)
+### Open (20 seconds)
 
 [Look at the three peers, not at your screen.]
 
-Adversary is a multi-agent platform that continuously red-teams the Clinical Co-Pilot from Weeks 1 and 2. Four agents, distinct vendors between attacker and judge, regression harness gated into CI. The interesting decisions are the model choices and the trust boundary between platform and target. Both are where I expect you to push back.
+Adversary is a multi-agent platform that continuously red-teams the Clinical Co-Pilot from Weeks 1 and 2. Four agents, distinct vendors between attacker and judge, regression harness gated into CI. Two consequential decisions: the model pick per agent, and the trust boundary between platform and target.
 
-### Why multi-agent at all (40 seconds)
+### Why multi-agent (40 seconds)
 
-The Week 3 prompt has four jobs in one sentence: discover, evaluate, prioritize, document. Doing all four inside one agent creates conflicts of interest. An agent that generates attacks and also judges them confirms too much. An agent that picks priority and also writes reports over-documents whatever it spent budget on. So I have four agents, each with one job. If you want to argue for fewer agents, the case has to address how you avoid those conflicts. I do not think there is one.
+The case study names four jobs in one sentence: discover, evaluate, prioritize, document. Doing all four inside one agent creates conflicts of interest. An agent that generates attacks and also judges them confirms too much. An agent that picks priority and also writes reports over-documents whatever it spent budget on. Four agents, one job each, isolated where independence matters.
 
-### The four agents and the model picks (90 seconds)
+### The four agents (90 seconds)
 
 [Switch to the agent topology diagram if you have it on screen.]
 
-**Orchestrator runs on gpt-5-mini.** Strategic planner. Reads a coverage matrix from Postgres, picks the next campaign. Cheap model because the task is "given a small JSON, pick a category." Burning gpt-5 here is cost without quality.
+**Orchestrator runs on gpt-5-mini.** Strategic planner. Reads a coverage matrix from Postgres, picks the next campaign. Cheap model because the task is "given a small JSON, pick a category." gpt-5 here is cost without quality.
 
-**Red Team runs on Llama 3.1 70B via Together.** This is the most deliberate decision I made. Frontier models refuse offensive prompts even with "I am a security researcher" framing. Llama 3.1 produces realistic adversarial content. It is also one eighth the cost of gpt-5 and the Red Team is the highest-volume agent. Push back here is most likely "you could have used a cleverer system prompt with gpt-5." I tried. The sanitized variants the frontier model produces get labeled ineffective by the Judge.
+**Red Team runs on Llama 3.1 70B via Together.** Frontier models refuse offensive prompts even with security-researcher framing. I tested gpt-5 with a jailbreak system prompt; the variants it produced got labeled ineffective by the Judge. Llama 3.1 produces realistic adversarial content, costs one eighth what gpt-5 costs, and the Red Team is the highest-volume agent.
 
-**Judge runs on Claude Sonnet 4.6.** Different vendor than the Red Team. This is non-negotiable. Same-vendor attack-and-judge creates correlation I cannot reason about. Every tenth verdict double-judged by Azure OpenAI for drift detection.
+**Judge runs on Claude Sonnet 4.6.** Different vendor than the Red Team. Same-vendor attack-and-judge creates correlation I cannot reason about. Every tenth verdict is double-judged by Azure OpenAI for drift detection.
 
 **Documentation runs on gpt-5.** Only fires on confirmed exploits. The report is the artifact a senior security engineer reproduces the bug from, so the quality bar justifies the cost.
 
-### The decision I am proudest of (40 seconds)
+### The Target Adapter boundary (40 seconds)
 
-It is not any of the agents. It is the Target Adapter boundary. Every target the platform attacks implements a single interface: open session, send message, send multi-turn, upload, close, healthcheck. The Clinical Co-Pilot adapter is 150 lines of Python. Next week when I attack a different product, I write another 150 lines. Same Orchestrator, same Red Team, same Judge. One platform, many adapters. The whole architecture bet is that we are going to keep shipping LLM products and we need a reusable security layer.
+Every target the platform attacks implements a single interface: open session, send message, send multi-turn, upload, close, healthcheck. The Clinical Co-Pilot adapter is 150 lines of Python. Attacking a different product next week is another 150 lines. Same Orchestrator, same Red Team, same Judge. One platform, many adapters. The architecture bet is that we keep shipping LLM products and need a reusable security layer.
 
-### What I expect you to attack (60 seconds)
+### Trade-offs (60 seconds)
 
-[Slow down here. Make eye contact. This is the part that wins the vote.]
+[Slow down here. Make eye contact.]
 
-Four hooks for you to pull on.
+Four costs I accepted.
 
-**One.** Vendor independence costs money and complexity. Three billing relationships, three rate-limit ceilings. The alternative is single-vendor with built-in correlation. I picked complexity over correlation. Reasonable people disagree.
+**One.** Vendor independence means three billing relationships and three rate-limit ceilings. The alternative is single-vendor with built-in correlation.
 
-**Two.** The Judge is not perfect. 94 percent on the calibration set. Six percent of verdicts are wrong, in either direction. I surface this number; some of you will argue that an unreliable Judge is worse than no Judge.
+**Two.** The Judge scores 94 percent on the calibration set. Six percent of verdicts are wrong in either direction. The platform surfaces this number on the dashboard rather than hiding it.
 
-**Three.** Cost amplifies at scale. About $1.50 per campaign now. At 100K campaigns a month, projection is low five figures. There is an optimization path through Judge distillation, but I have not built it. You can argue I should have.
+**Three.** Per-campaign cost is about $1.50. At 100K campaigns a month, projection is low five figures. There is an optimization path through Judge distillation and batch APIs; not built this week.
 
-**Four.** LangGraph is a dependency. If LangGraph deprecates or pivots, I refactor. I am betting on it; you can argue I should have hand-rolled.
+**Four.** LangGraph is a framework dependency. Each node is a plain Python async function, so a swap to Temporal or hand-rolled state machine is a refactor, not a rewrite.
 
 ### Close (20 seconds)
 
 [Stop the diagram switching. Look at the group.]
 
-That is the platform. Four agents, vendor-split between attacker and judge, reusable target boundary, three confirmed exploits on the live Co-Pilot, regression gated into CI. Repo at github.com/scott-lydon/adversary. Where do you want to start?
+Four agents, vendor-split between attacker and judge, reusable target boundary, three confirmed exploits on the live Co-Pilot, regression gated into CI. Repo at github.com/scott-lydon/adversary.
 
-[Stop talking. Do not fill silence. Let them ask.]
+[Stop talking. Let them ask.]
 
 ---
 
