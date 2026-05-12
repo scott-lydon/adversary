@@ -231,20 +231,21 @@
     {% if target.kind == 'clinical_copilot' or target.kind == 'http_chat' %}
     <label class="block md:col-span-2">
       <span class="text-xs uppercase muted tracking-wider flex items-center gap-2 flex-wrap">
-        Task token{% if target.kind == 'clinical_copilot' %} (required for /chat){% endif %}
+        Task token{% if target.kind == 'clinical_copilot' %} (leave blank to auto-mint){% endif %}
         {% if target.kind == 'clinical_copilot' %}
-        <a href="#how-to-get-token" class="badge badge-info no-underline" style="font-size: 0.65rem; text-transform: none; letter-spacing: 0;">How do I get one? ↑</a>
+        <a href="#how-to-get-token" class="badge badge-info no-underline" style="font-size: 0.65rem; text-transform: none; letter-spacing: 0;">How auto-mint works ↑</a>
         {% endif %}
       </span>
-      <input type="password" name="task_token" autocomplete="off"
-             placeholder="paste your HS256 task JWT here (see Step 1 above for how to mint one)"
+      <input type="text" name="task_token" autocomplete="off" data-1p-ignore data-lpignore="true" spellcheck="false"
+             placeholder="leave blank — the dashboard SSHes into the BFF container and mints one for you"
              class="w-full p-2 mt-1 font-mono text-xs" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
     </label>
     <label class="block md:col-span-2">
       <span class="text-xs uppercase muted tracking-wider">
-        Patient id{% if target.kind == 'clinical_copilot' %} (required){% endif %}
+        Patient id{% if target.kind == 'clinical_copilot' %} (defaults to 1 if blank){% endif %}
       </span>
-      <input type="text" name="patient_id" placeholder="Patient/87413"
+      <input type="text" name="patient_id"
+             {% if target.kind == 'clinical_copilot' %}placeholder="1"{% else %}placeholder="Patient/87413"{% endif %}
              class="w-full p-2 mt-1 font-mono text-xs" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
     </label>
     {% endif %}

@@ -8,10 +8,14 @@ behind the allowlist gate.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+import time as _time_module
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
@@ -106,6 +110,311 @@ def _target_filter_clause(
         return base_sql, ()
     # Inject WHERE before ORDER BY if present, else append.
     return (f"{base_sql} AND target_id=?", (row["id"],))
+
+
+# ---------------------------------------------------------------------------
+# Clinical Co-Pilot task-token auto-mint
+# ---------------------------------------------------------------------------
+#
+# The Clinical Co-Pilot sidecar at /chat enforces a 5-minute HMAC-SHA-256 JWT.
+# To remove paste-the-token friction from the local single-user dashboard, the
+# scan and replay handlers below will auto-mint a token when the form field is
+# left blank. Two paths:
+#
+#   1. Local mint (fast, no network):
+#      Set env var COPILOT_BFF_JWT_SIGNING_KEY to the same value the sidecar
+#      uses (the BFF's signing key, found in /opt/openemr/.env on the
+#      deployment box). The dashboard then mints in-process with no SSH hop.
+#
+#   2. SSH mint (default, no secret on the Mac):
+#      `ssh root@<hostname-of-target> docker exec copilot-bff python3 -c …`
+#      shells into the BFF container where the signing key already lives.
+#      SSH key auth must already work from the dashboard's shell.
+#      Override via env: ADVERSARY_BFF_SSH_HOST, ADVERSARY_BFF_CONTAINER.
+#
+# Tokens are cached in-process keyed by (base_url, patient_id, user_id) so a
+# burst of scans against the same target/patient does not re-mint on every
+# click. The cache refreshes ~2 minutes before expiry.
+
+_AUTO_MINT_TTL_SECONDS = 900
+_AUTO_MINT_REFRESH_BEFORE = 120
+_AUTO_MINT_USER_ID_DEFAULT = "dashboard-auto"
+_AUTO_MINT_PURPOSES: tuple[str, ...] = (
+    "diagnostic_cross_check",
+    "chart_error_scan",
+    "follow_up_question",
+)
+_AUTO_MINT_DEFAULT_PATIENT_ID = "1"
+_AUTO_MINT_PLACEHOLDER_SIGNING_KEY = "change-me-to-a-32-byte-hex-string"
+
+_TOKEN_CACHE: dict[tuple[str, str, str], tuple[str, float]] = {}
+_TOKEN_CACHE_LOCK = asyncio.Lock()
+
+
+class AutoMintError(RuntimeError):
+    """Raised when auto-minting a Clinical Co-Pilot task token fails.
+
+    The message is intentionally surface-friendly: every raise site explains
+    the precise failure mode and the next manual step (env var to set, SSH
+    diagnostic to run, paste path in the form, etc.) so the dashboard's
+    400-response detail is enough to fix the problem without grepping code.
+    """
+
+
+def _mint_token_locally(
+    *,
+    signing_key: str,
+    user_id: str,
+    patient_id: str,
+    ttl_seconds: int,
+    purposes: list[str],
+) -> str:
+    """Forge an HMAC-SHA-256 JWT identical in shape to the BFF's mint output."""
+    import base64
+    import hashlib
+    import hmac
+    import secrets
+
+    now_unix = int(_time_module.time())
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload: dict[str, object] = {
+        "iss": "clinical-copilot-bff",
+        "sub": user_id,
+        "patient_id": patient_id,
+        "purpose_of_use": purposes,
+        "scope": "patient/*.read",
+        "iat": now_unix,
+        "nbf": now_unix,
+        "exp": now_unix + ttl_seconds,
+        "jti": secrets.token_urlsafe(12),
+    }
+
+    def _b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    h_seg = _b64(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+    p_seg = _b64(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signing_input = f"{h_seg}.{p_seg}".encode("ascii")
+    sig = hmac.new(
+        signing_key.encode("utf-8"), signing_input, hashlib.sha256
+    ).digest()
+    s_seg = _b64(sig)
+    return f"{h_seg}.{p_seg}.{s_seg}"
+
+
+async def _mint_token_via_ssh(
+    *,
+    ssh_host: str,
+    bff_container: str,
+    user_id: str,
+    patient_id: str,
+    ttl_seconds: int,
+    purposes: list[str],
+) -> str:
+    """Run mint_task_token inside the BFF container over SSH.
+
+    The signing key never leaves the deployment host. Every failure mode
+    (missing ssh binary, SSH auth refused, container down, mint module not
+    importable, malformed return value) raises `AutoMintError` with the
+    exact diagnostic command to run next.
+    """
+    import shlex
+
+    purposes_literal = json.dumps(purposes)
+    mint_script = (
+        "import os\n"
+        "from sidecar.auth import mint_task_token\n"
+        "print(mint_task_token(\n"
+        "  signing_key=os.environ['COPILOT_BFF_JWT_SIGNING_KEY'],\n"
+        f"  user_id={user_id!r},\n"
+        f"  patient_id={patient_id!r},\n"
+        f"  purposes_of_use={purposes_literal},\n"
+        "  scopes=['patient/*.read'],\n"
+        f"  lifetime_seconds={ttl_seconds},\n"
+        "  issuer='clinical-copilot-bff',\n"
+        "))\n"
+    )
+    remote_cmd = (
+        f"docker exec -i {shlex.quote(bff_container)} "
+        f"python3 -c {shlex.quote(mint_script)}"
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            ssh_host,
+            remote_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        raise AutoMintError(
+            f"auto-mint failed: `ssh` binary not found in PATH ({exc}). "
+            "Install OpenSSH client or paste a token into the form manually."
+        ) from exc
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
+    except asyncio.TimeoutError as exc:
+        proc.kill()
+        raise AutoMintError(
+            "auto-mint timed out after 20s while running "
+            f"`ssh {ssh_host} docker exec {bff_container} ...`. "
+            "Diagnose with: "
+            f"ssh -o BatchMode=yes -o ConnectTimeout=5 {ssh_host} echo ok"
+        ) from exc
+    if proc.returncode != 0:
+        err = (stderr or b"").decode("utf-8", errors="replace").strip()
+        raise AutoMintError(
+            f"auto-mint ssh exit={proc.returncode}: {err or '(empty stderr)'}.\n"
+            "Common causes: SSH key auth not set up "
+            f"(try `ssh {ssh_host} echo ok`), container {bff_container!r} not "
+            f"running (try `ssh {ssh_host} docker ps`), or "
+            "COPILOT_BFF_JWT_SIGNING_KEY missing from that container's env."
+        )
+    token = (stdout or b"").decode("utf-8", errors="replace").strip()
+    if token.count(".") != 2:
+        raise AutoMintError(
+            f"auto-mint produced a non-JWT value: {token[:80]!r} "
+            "(expected three dot-separated segments). The BFF container's "
+            "mint_task_token may have changed its return shape, or the SSH "
+            "session printed banner text before the script output."
+        )
+    return token
+
+
+async def auto_mint_task_token(
+    *,
+    base_url: str,
+    patient_id: str,
+    user_id: str = _AUTO_MINT_USER_ID_DEFAULT,
+) -> str:
+    """Return a Clinical Co-Pilot task token, minting if no cached copy is valid.
+
+    Cache key is (base_url, patient_id, user_id). A cached token is reused
+    until it has less than `_AUTO_MINT_REFRESH_BEFORE` seconds remaining.
+    """
+    if not patient_id:
+        raise AutoMintError(
+            "auto-mint requires a non-empty patient_id; pass one in the "
+            "Patient id field (the sidecar's task token is scoped per patient)."
+        )
+    cache_key = (base_url, patient_id, user_id)
+    now = _time_module.time()
+    async with _TOKEN_CACHE_LOCK:
+        cached = _TOKEN_CACHE.get(cache_key)
+        if cached and (cached[1] - now) > _AUTO_MINT_REFRESH_BEFORE:
+            return cached[0]
+        purposes = list(_AUTO_MINT_PURPOSES)
+        ttl = _AUTO_MINT_TTL_SECONDS
+        signing_key = os.environ.get("COPILOT_BFF_JWT_SIGNING_KEY")
+        if signing_key and signing_key != _AUTO_MINT_PLACEHOLDER_SIGNING_KEY:
+            token = _mint_token_locally(
+                signing_key=signing_key,
+                user_id=user_id,
+                patient_id=patient_id,
+                ttl_seconds=ttl,
+                purposes=purposes,
+            )
+        else:
+            ssh_host = os.environ.get("ADVERSARY_BFF_SSH_HOST")
+            if not ssh_host:
+                parsed = urlparse(base_url)
+                hostname = parsed.hostname
+                if not hostname:
+                    raise AutoMintError(
+                        "auto-mint cannot derive an SSH host from "
+                        f"base_url={base_url!r} (no hostname). "
+                        "Set ADVERSARY_BFF_SSH_HOST=user@host."
+                    )
+                ssh_host = f"root@{hostname}"
+            bff_container = os.environ.get(
+                "ADVERSARY_BFF_CONTAINER", "copilot-bff"
+            )
+            token = await _mint_token_via_ssh(
+                ssh_host=ssh_host,
+                bff_container=bff_container,
+                user_id=user_id,
+                patient_id=patient_id,
+                ttl_seconds=ttl,
+                purposes=purposes,
+            )
+        _TOKEN_CACHE[cache_key] = (token, now + ttl)
+        return token
+
+
+async def _resolve_copilot_auth(
+    *,
+    target_kind: TargetKind,
+    base_url: str,
+    task_token: str,
+    patient_id: str,
+) -> tuple[str | None, str | None]:
+    """Return (effective_task_token, effective_patient_id) for a scan/replay.
+
+    For non-Co-Pilot targets the inputs pass through unchanged. For
+    `clinical_copilot` targets: a blank patient_id defaults to
+    `_AUTO_MINT_DEFAULT_PATIENT_ID`, and a blank token triggers auto-mint
+    against `base_url` (which feeds the SSH hostname fallback).
+    """
+    effective_token: str | None = task_token.strip() or None
+    effective_patient_id: str | None = patient_id.strip() or None
+    if target_kind != TargetKind.CLINICAL_COPILOT:
+        return effective_token, effective_patient_id
+    if not effective_patient_id:
+        effective_patient_id = _AUTO_MINT_DEFAULT_PATIENT_ID
+    if not effective_token:
+        effective_token = await auto_mint_task_token(
+            base_url=base_url,
+            patient_id=effective_patient_id,
+        )
+    return effective_token, effective_patient_id
+
+
+async def _resolve_replay_auth(
+    store: SqliteStore,
+    attack_id: str,
+    task_token: str,
+    patient_id: str,
+) -> tuple[str | None, str | None]:
+    """Resolve auth for replay endpoints by looking up the attack's target.
+
+    Mirrors what `replay_attack` does internally so we can auto-mint a token
+    before the call. Raises `AttackNotFound` if the lookup fails (the caller
+    re-raises as 404) and `AutoMintError` if minting fails (re-raised as 400).
+    """
+    attack_row = store.conn.execute(
+        "SELECT target_id FROM attacks WHERE attack_id=?", (attack_id,)
+    ).fetchone()
+    if attack_row is None:
+        raise AttackNotFound(
+            f"no attack row with attack_id={attack_id!r}. "
+            "Browse /attacks to find a valid id before replaying."
+        )
+    target_id = attack_row["target_id"]
+    if not target_id:
+        raise AttackNotFound(
+            f"attack {attack_id!r} has no target_id stamped; cannot auto-mint."
+        )
+    target_dict = store.get_target(target_id)
+    if target_dict is None:
+        raise AttackNotFound(
+            f"attack {attack_id!r} references missing target_id={target_id!r}."
+        )
+    kind_str = str(target_dict.get("kind") or "")
+    try:
+        kind = TargetKind(kind_str)
+    except ValueError:
+        # Unknown kinds skip auto-mint entirely.
+        return task_token.strip() or None, patient_id.strip() or None
+    return await _resolve_copilot_auth(
+        target_kind=kind,
+        base_url=str(target_dict.get("base_url") or ""),
+        task_token=task_token,
+        patient_id=patient_id,
+    )
 
 
 def create_app() -> FastAPI:
@@ -433,6 +742,26 @@ def create_app() -> FastAPI:
         else:
             seed_int = None
         try:
+            effective_task_token, effective_patient_id = await _resolve_copilot_auth(
+                target_kind=record.kind,
+                base_url=record.base_url,
+                task_token=task_token,
+                patient_id=patient_id,
+            )
+        except AutoMintError as exc:
+            store.close()
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"auto-mint of task token for {name!r} failed: {exc}\n"
+                    "Manual fallback: run `adversary debug mint-task-token "
+                    "--user-id you --patient-id "
+                    f"{patient_id.strip() or _AUTO_MINT_DEFAULT_PATIENT_ID} "
+                    "--remote-host root@<host> --bff-container copilot-bff` "
+                    "and paste the JWT into the Task token field."
+                ),
+            ) from exc
+        try:
             outcomes = await run_scan_for_target(
                 store=store,
                 record=record,
@@ -440,8 +769,8 @@ def create_app() -> FastAPI:
                 max_campaigns=max_campaigns,
                 provider_name=provider,
                 seed=seed_int,
-                task_token=task_token.strip() or None,
-                patient_id=patient_id.strip() or None,
+                task_token=effective_task_token,
+                patient_id=effective_patient_id,
                 reports_dir=Path("vulnerability-reports"),
             )
         except TargetNotAllowlisted as exc:
@@ -488,11 +817,23 @@ def create_app() -> FastAPI:
         """Replay a single previously-persisted attack."""
         store = _store()
         try:
+            effective_task_token, effective_patient_id = (
+                await _resolve_replay_auth(
+                    store, attack_id, task_token, patient_id
+                )
+            )
+        except AttackNotFound as exc:
+            store.close()
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except AutoMintError as exc:
+            store.close()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
             summary = await replay_attack(
                 store=store,
                 attack_id=attack_id,
-                task_token=task_token.strip() or None,
-                patient_id=patient_id.strip() or None,
+                task_token=effective_task_token,
+                patient_id=effective_patient_id,
             )
         except AttackNotFound as exc:
             store.close()
@@ -536,11 +877,23 @@ def create_app() -> FastAPI:
             )
         attack_id = row["lineage_root"]
         try:
+            effective_task_token, effective_patient_id = (
+                await _resolve_replay_auth(
+                    store, attack_id, task_token, patient_id
+                )
+            )
+        except AttackNotFound as exc:
+            store.close()
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except AutoMintError as exc:
+            store.close()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
             summary = await replay_attack(
                 store=store,
                 attack_id=attack_id,
-                task_token=task_token.strip() or None,
-                patient_id=patient_id.strip() or None,
+                task_token=effective_task_token,
+                patient_id=effective_patient_id,
             )
         except AttackNotFound as exc:
             store.close()
