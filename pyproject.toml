@@ -30,6 +30,7 @@ dependencies = [
   "typer>=0.12.0",
   "rich>=13.7.0",
   "pyyaml>=6.0",
+  "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +44,20 @@ dev = [
 
 [project.scripts]
 adversary = "adversary.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adversary"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/adversary/dashboard/templates" = "adversary/dashboard/templates"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+  "integration: requires a live target (ADVERSARY_LIVE_TARGET=1)",
+  "live: requires live LLM providers (ADVERSARY_LIVE_PROVIDER=1)",
+]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100

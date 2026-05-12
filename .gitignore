@@ -44,3 +44,9 @@ logs/
 *.log
 langfuse-data/
 pgdata/
+
+# Runtime artifacts
+adversary.db
+adversary.db-journal
+regress.xml
+pytest-cache-files-*/

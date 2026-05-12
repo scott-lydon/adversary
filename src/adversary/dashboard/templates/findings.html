@@ -1,0 +1,35 @@
+{% extends "_base.html" %}
+{% block title %}Findings{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold">Findings</h1>
+{% if findings %}
+<table class="w-full panel text-sm">
+  <thead class="text-slate-400 text-left">
+    <tr>
+      <th>ID</th>
+      <th>Severity</th>
+      <th>Category</th>
+      <th>Status</th>
+      <th>Created</th>
+      <th>Report</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in findings %}
+    <tr class="border-t border-slate-700">
+      <td>{{ f.id }}</td>
+      <td>
+        <span class="badge {% if f.severity == 'Critical' %}bg-red-700{% elif f.severity == 'High' %}bg-orange-600{% elif f.severity == 'Medium' %}bg-yellow-600{% else %}bg-slate-600{% endif %}">{{ f.severity }}</span>
+      </td>
+      <td>{{ f.category }}.{{ f.subcategory }}</td>
+      <td>{{ f.status }}</td>
+      <td>{{ f.created_at }}</td>
+      <td><a href="/findings/{{ f.id }}">view</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="panel text-slate-400">no findings yet. run a scan first.</div>
+{% endif %}
+{% endblock %}

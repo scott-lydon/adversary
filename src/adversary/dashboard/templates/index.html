@@ -1,0 +1,50 @@
+{% extends "_base.html" %}
+{% block title %}Summary{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold">Summary</h1>
+<section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+  <div class="panel">
+    <div class="text-slate-400 text-xs uppercase">Campaigns</div>
+    <div class="text-3xl font-bold">{{ summary.campaigns }}</div>
+  </div>
+  <div class="panel">
+    <div class="text-slate-400 text-xs uppercase">Attacks</div>
+    <div class="text-3xl font-bold">{{ summary.attacks }}</div>
+  </div>
+  <div class="panel">
+    <div class="text-slate-400 text-xs uppercase">Confirmed Exploits</div>
+    <div class="text-3xl font-bold">{{ summary.verdicts.success or 0 }}</div>
+  </div>
+  <div class="panel">
+    <div class="text-slate-400 text-xs uppercase">Total Cost</div>
+    <div class="text-3xl font-bold">${{ "%.4f"|format(summary.total_dollar_cost) }}</div>
+  </div>
+</section>
+
+<section class="grid grid-cols-2 gap-4">
+  <div class="panel">
+    <div class="text-slate-400 text-xs uppercase">Verdict mix</div>
+    <div class="mt-2 space-y-1">
+      <div>success: {{ summary.verdicts.success or 0 }}</div>
+      <div>partial: {{ summary.verdicts.partial or 0 }}</div>
+      <div>fail: {{ summary.verdicts.fail or 0 }}</div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="text-slate-400 text-xs uppercase">Findings by severity</div>
+    <div class="mt-2 space-y-1">
+      {% for severity, count in summary.findings_by_severity.items() %}
+        <div>{{ severity }}: {{ count }}</div>
+      {% else %}
+        <div class="text-slate-400">no findings yet</div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="text-slate-400 text-xs uppercase">Audit chain head</div>
+  <div class="font-mono text-xs break-all">{{ summary.audit_head_hash }}</div>
+  <div class="text-slate-400 text-xs">rows: {{ summary.audit_rows }}</div>
+</section>
+{% endblock %}

@@ -1,0 +1,27 @@
+{% extends "_base.html" %}
+{% block title %}Coverage{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold">Coverage matrix</h1>
+{% if rows %}
+<table class="w-full panel text-sm">
+  <thead class="text-slate-400 text-left">
+    <tr><th>Category</th><th>Subcategory</th><th>Runs</th><th>Success</th><th>Partial</th><th>Fail</th><th>Pass-rate</th></tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr class="border-t border-slate-700">
+      <td>{{ r.category }}</td>
+      <td>{{ r.subcategory }}</td>
+      <td>{{ r.runs }}</td>
+      <td>{{ r.successes }}</td>
+      <td>{{ r.partials }}</td>
+      <td>{{ r.fails }}</td>
+      <td><span class="badge {{ r.cell_class }}">{{ "%.0f"|format(100*r.pass_rate) }}%</span></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="panel text-slate-400">coverage matrix is empty. run a scan first.</div>
+{% endif %}
+{% endblock %}

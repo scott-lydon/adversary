@@ -1,0 +1,26 @@
+{% extends "_base.html" %}
+{% block title %}Audit{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold">Audit log (latest 100)</h1>
+{% if rows %}
+<table class="w-full panel text-xs">
+  <thead class="text-slate-400 text-left">
+    <tr><th>#</th><th>occurred_at</th><th>agent</th><th>action</th><th>prev_hash</th><th>this_hash</th></tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr class="border-t border-slate-700">
+      <td>{{ r.rowid_seq }}</td>
+      <td>{{ r.occurred_at }}</td>
+      <td>{{ r.agent }}</td>
+      <td>{{ r.action }}</td>
+      <td class="font-mono">{{ r.prev_hash[:16] }}…</td>
+      <td class="font-mono">{{ r.this_hash[:16] }}…</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="panel text-slate-400">audit log is empty.</div>
+{% endif %}
+{% endblock %}
