@@ -120,76 +120,88 @@
   </div>
   {% endif %}
 
-  {% if not target.allowlisted %}
-  <p class="text-sm muted mb-2">
-    This target is <span class="bad">not allowlisted</span> yet. Scans are blocked.
-    Use the <code>Allowlist this target</code> button above first; it's a deliberate
-    gate per ARCHITECTURE §9.
-  </p>
-  {% else %}
-  <p class="text-sm muted mb-4">
-    Submits a real scan against <code>{{ target.base_url }}</code>. For the
-    <code>scripted</code> provider this finishes in a couple of seconds; for
-    <code>live</code> it can take a minute and will spend real money on LLM
-    APIs (capped at $5).
-  </p>
   {% if target.kind == 'clinical_copilot' %}
-  <div class="panel p-4 mb-4 border-warn" style="border-width: 1px; background: rgba(251, 191, 36, 0.05);">
-    <div class="text-xs uppercase muted tracking-wider mb-2">How to get a task token for this target</div>
+  <!-- Token instructions: ALWAYS visible for clinical_copilot targets, regardless of allowlist state. -->
+  <div class="panel p-4 mb-5 border-warn" id="how-to-get-token" style="border-width: 1px; background: rgba(251, 191, 36, 0.05);">
+    <div class="text-xs uppercase muted tracking-wider mb-2">Step 1 &middot; How to get a task token</div>
     <p class="text-sm muted mb-3">
-      The sidecar at <code>{{ target.base_url }}/chat</code> requires a real HS256 JWT
-      signed with the deployment's <code>COPILOT_BFF_JWT_SIGNING_KEY</code>. Three honest
-      paths, easiest first:
+      You can't avoid this step: scanning <code>{{ target.base_url }}/chat</code> requires
+      a real HS256 JWT signed with the deployment's <code>COPILOT_BFF_JWT_SIGNING_KEY</code>.
+      The sidecar's <code>verify_task_token</code> rejects anything else. Three honest paths,
+      easiest first.
     </p>
 
+    <!-- Recommended -->
     <div class="panel p-3 mb-4 border-good" style="border-width: 1px; background: rgba(52, 211, 153, 0.06);">
-      <div class="text-xs uppercase good tracking-wider mb-1">Recommended (one shell command)</div>
+      <div class="text-xs uppercase good tracking-wider mb-2">Recommended &middot; one shell command</div>
       <p class="text-sm mb-2">
-        Run this from your terminal. It SSHs to the host, mints a token <strong>inside</strong>
-        the BFF container (so the signing key never leaves the deployment), prints the token to stdout:
+        From a terminal on the machine that runs this dashboard. SSHs to the host, mints
+        a token <strong>inside</strong> the BFF container (signing key never leaves the deployment),
+        prints the JWT to stdout:
       </p>
-      <pre class="text-xs">adversary debug mint-task-token \
+      <pre class="text-xs select-all" style="user-select: all;">adversary debug mint-task-token \
   --remote-host root@5.161.253.237 \
   --bff-container copilot-bff \
   --user-id admin \
   --patient-id Patient/87413 \
   --ttl-seconds 1800</pre>
       <p class="text-xs muted mt-2">
-        Verified end-to-end against this exact target: the resulting JWT
-        returns HTTP 200 from <code>POST /chat</code>. Paste the token into the
-        <code>Task token</code> field below.
+        Verified end-to-end against this exact target: <code>POST /chat</code> with the
+        resulting JWT returns HTTP 200 with real clinical reasoning in the body. Copy the
+        line of output and paste into the <strong>Task token</strong> field in the form below.
+        Replace <code>root@5.161.253.237</code> and <code>copilot-bff</code> for your own deployment.
       </p>
     </div>
 
-    <p class="text-sm muted mb-2"><strong>Other paths if SSH is not available:</strong></p>
-    <ol class="space-y-3 text-sm list-decimal list-inside">
-      <li>
-        <strong>Capture from a live browser.</strong> Log into OpenEMR with admin /
-        OpenEmrAdmin!2026, click Launch Co-Pilot on Patient/87413, open Chrome DevTools
-        → Network tab, watch a <code>/chat</code> request fire, copy the
-        <code>Authorization: Bearer &lt;token&gt;</code> header value. TTL is 5 minutes.
-      </li>
-      <li>
-        <strong>Local mint with a known key.</strong> If you exported the signing key into
-        your shell already:
-        <pre class="text-xs mt-1">COPILOT_BFF_JWT_SIGNING_KEY='&lt;value&gt;' adversary debug mint-task-token \
+    <!-- Fallback 1 -->
+    <div class="panel p-3 mb-3" style="background: var(--panel2);">
+      <div class="text-xs uppercase muted tracking-wider mb-2">Fallback A &middot; capture from a live browser session</div>
+      <p class="text-sm muted mb-1">Use this when SSH to the deployment isn't available to you.</p>
+      <ol class="text-xs space-y-1 list-decimal list-inside muted">
+        <li>Open <code>{{ target.base_url }}</code> in Chrome; log in with <code>admin</code> / <code>OpenEmrAdmin!2026</code>.</li>
+        <li>Open Patient/87413's chart.</li>
+        <li>Click <strong>Launch Co-Pilot</strong> in the action bar.</li>
+        <li>Open Chrome DevTools (Cmd-Option-I); select the <strong>Network</strong> tab.</li>
+        <li>In the Co-Pilot UI pick a patient + purpose and click Run. Watch a request to <code>/chat</code> appear.</li>
+        <li>Click that request, scroll to <strong>Request Headers</strong>, copy the value after <code>Authorization: Bearer </code>.</li>
+        <li>Paste into the <strong>Task token</strong> field. TTL is 5 minutes.</li>
+      </ol>
+    </div>
+
+    <!-- Fallback 2 -->
+    <div class="panel p-3 mb-3" style="background: var(--panel2);">
+      <div class="text-xs uppercase muted tracking-wider mb-2">Fallback B &middot; local mint when the key is already in your shell</div>
+      <p class="text-sm muted mb-2">If <code>COPILOT_BFF_JWT_SIGNING_KEY</code> is already exported:</p>
+      <pre class="text-xs select-all" style="user-select: all;">COPILOT_BFF_JWT_SIGNING_KEY='&lt;value&gt;' adversary debug mint-task-token \
   --user-id admin --patient-id Patient/87413 --ttl-seconds 1800</pre>
-      </li>
-      <li>
-        <strong>Local dev sidecar.</strong> Run the sidecar locally
-        (<code>COPILOT_BFF_JWT_SIGNING_KEY=&lt;dev-key&gt; python -m sidecar.main</code>), register
-        a fresh <code>http_chat</code> target at <code>http://127.0.0.1:8801</code>, mint a
-        token with the same dev key, scan that.
-      </li>
-    </ol>
-    <p class="text-xs muted mt-3">
-      The minter produces a real HS256 JWT shaped exactly like your BFF's
-      <code>mint_task_token</code> (iss, sub, patient_id, purpose_of_use, scope, iat,
-      nbf, exp, jti). The sidecar's <code>verify_task_token</code> accepts it as long
-      as the signing key matches. Pass <code>--synthetic</code> for an offline
-      placeholder (NOT accepted by any real sidecar).
+    </div>
+
+    <p class="text-xs muted">
+      The minter produces a real HS256 JWT shaped exactly like the BFF's
+      <code>mint_task_token</code> (claims: <code>iss, sub, patient_id, purpose_of_use,
+      scope, iat, nbf, exp, jti</code>). The sidecar's <code>verify_task_token</code>
+      accepts it as long as the signing key matches. Pass <code>--synthetic</code> for an
+      offline placeholder that does NOT validate against any real sidecar.
     </p>
   </div>
+  {% endif %}
+
+  {% if not target.allowlisted %}
+  <div class="panel p-4 mb-4 border-warn" style="border-width: 1px;">
+    <div class="text-xs uppercase muted tracking-wider mb-1">Step 2 &middot; Allowlist this target</div>
+    <p class="text-sm muted mb-0">
+      Target is <span class="bad">not allowlisted</span> yet. Scans are blocked until you
+      press <code>Allowlist this target</code> in the panel above. Deliberate gate per
+      ARCHITECTURE §9: prevents the platform from being pointed at arbitrary URLs.
+    </p>
+  </div>
+  {% else %}
+  <p class="text-sm muted mb-4">
+    {% if target.kind == 'clinical_copilot' %}<strong>Step 2 &middot;</strong> {% endif %}Submits a real scan against <code>{{ target.base_url }}</code>. For the
+    <code>scripted</code> provider this finishes in a couple of seconds; for
+    <code>live</code> it can take a minute and will spend real money on LLM
+    APIs (capped at $5).
+  </p>
   {% endif %}
   <form method="post" action="/targets/{{ target.name }}/scan" class="grid grid-cols-1 md:grid-cols-2 gap-4">
     <label class="block">
@@ -217,11 +229,14 @@
     </label>
     {% if target.kind == 'clinical_copilot' or target.kind == 'http_chat' %}
     <label class="block md:col-span-2">
-      <span class="text-xs uppercase muted tracking-wider">
+      <span class="text-xs uppercase muted tracking-wider flex items-center gap-2 flex-wrap">
         Task token{% if target.kind == 'clinical_copilot' %} (required for /chat){% endif %}
+        {% if target.kind == 'clinical_copilot' %}
+        <a href="#how-to-get-token" class="badge badge-info no-underline" style="font-size: 0.65rem; text-transform: none; letter-spacing: 0;">How do I get one? ↑</a>
+        {% endif %}
       </span>
       <input type="password" name="task_token" autocomplete="off"
-             placeholder="paste your 5-min HS256 task JWT here"
+             placeholder="paste your HS256 task JWT here (see Step 1 above for how to mint one)"
              class="w-full p-2 mt-1 font-mono text-xs" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
     </label>
     <label class="block md:col-span-2">
@@ -235,15 +250,15 @@
     <div class="md:col-span-2 flex items-center gap-3 mt-2">
       <button type="submit"
               class="px-5 py-2.5 rounded-lg font-medium no-underline"
-              style="background: var(--accent); color: white; cursor: pointer;">
+              style="background: {% if target.allowlisted %}var(--accent){% else %}var(--panel2){% endif %}; color: {% if target.allowlisted %}white{% else %}var(--muted){% endif %}; cursor: {% if target.allowlisted %}pointer{% else %}not-allowed{% endif %};"
+              {% if not target.allowlisted %}disabled title="Allowlist this target first"{% endif %}>
         Run scan now
       </button>
       <span class="text-xs muted">
-        The request blocks until the scan completes; ~2s for scripted, longer for live.
+        {% if not target.allowlisted %}Disabled until you allowlist the target above.{% else %}The request blocks until the scan completes; ~2s for scripted, longer for live.{% endif %}
       </span>
     </div>
   </form>
-  {% endif %}
 </section>
 
 <section class="panel p-5 mb-8">
