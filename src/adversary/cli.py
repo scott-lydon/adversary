@@ -616,19 +616,198 @@ def mint_task_token(
     user_id: str = typer.Option(...),
     patient_id: str = typer.Option(...),
     ttl_seconds: int = typer.Option(300),
+    signing_key: str | None = typer.Option(
+        None,
+        "--signing-key",
+        envvar="COPILOT_BFF_JWT_SIGNING_KEY",
+        help=(
+            "HS256 signing key the sidecar verifies with. Reads "
+            "COPILOT_BFF_JWT_SIGNING_KEY from env if --signing-key is not "
+            "passed. Must match the value on the target sidecar. Ignored "
+            "when --remote-host is set."
+        ),
+    ),
+    remote_host: str | None = typer.Option(
+        None,
+        "--remote-host",
+        help=(
+            "SSH host where the BFF container runs. When set, the minter "
+            "runs INSIDE the container (where the signing key already "
+            "lives) and never copies the secret across the network. "
+            "Pair with --bff-container."
+        ),
+    ),
+    bff_container: str = typer.Option(
+        "copilot-bff",
+        "--bff-container",
+        help="Docker container name running the BFF on --remote-host.",
+    ),
+    purposes: str = typer.Option(
+        "diagnostic_cross_check,chart_error_scan,follow_up_question",
+        help="Comma-separated purpose_of_use claims.",
+    ),
+    issuer: str = typer.Option(
+        "clinical-copilot-bff",
+        help="Issuer claim. Sidecar accepts the two values it issues itself.",
+    ),
+    synthetic: bool = typer.Option(
+        False,
+        "--synthetic",
+        help=(
+            "Emit a non-cryptographic placeholder token (old behavior). The "
+            "real sidecar rejects this; only useful for offline pipeline tests."
+        ),
+    ),
 ) -> None:
-    """Mint a synthetic task token for the live target.
+    """Mint a task token for a Clinical Co-Pilot target.
 
-    The synthetic token is not actually accepted by the Hetzner sidecar; this
-    command is a placeholder so the manual test plan can demonstrate the flow.
-    Real tokens are minted by the OpenEMR BFF launch endpoint.
+    Real path (default): emits a properly-signed HS256 JWT shaped exactly
+    like the BFF's `mint_task_token` so the sidecar at /chat accepts it.
+    Requires the same signing key the sidecar uses
+    (`COPILOT_BFF_JWT_SIGNING_KEY` in the deployment's .env file).
+
+    To get the signing key for the Hetzner deployment:
+
+        ssh root@5.161.253.237 'grep COPILOT_BFF_JWT_SIGNING_KEY /opt/openemr/.env'
+
+    Then either export it before this command, or pass --signing-key.
+
+    For an offline placeholder that does NOT validate against any real
+    sidecar, pass --synthetic.
     """
-
+    import base64
+    import hashlib
+    import hmac
+    import json
+    import secrets
     import time as _time
 
-    now = datetime.now(timezone.utc).isoformat()
-    token = f"adv-debug-token.{user_id}.{patient_id}.{int(_time.time())}.ttl{ttl_seconds}.{now}"
-    console.print(token)
+    if synthetic:
+        now = datetime.now(timezone.utc).isoformat()
+        token = (
+            f"adv-debug-token.{user_id}.{patient_id}."
+            f"{int(_time.time())}.ttl{ttl_seconds}.{now}"
+        )
+        console.print(token)
+        return
+
+    if remote_host:
+        # Mint inside the BFF container so the signing key never leaves
+        # the deployment host. Requires `ssh root@host` to work and the
+        # BFF container to be running.
+        purpose_list = [p.strip() for p in purposes.split(",") if p.strip()]
+        if not purpose_list:
+            console.print("[red]--purposes must contain at least one entry.[/red]")
+            raise typer.Exit(code=1)
+        import json as _json
+        import shlex
+        import subprocess
+
+        purposes_literal = _json.dumps(purpose_list)
+        mint_script = (
+            "import os\n"
+            "from sidecar.auth import mint_task_token\n"
+            "print(mint_task_token(\n"
+            "  signing_key=os.environ['COPILOT_BFF_JWT_SIGNING_KEY'],\n"
+            f"  user_id={user_id!r},\n"
+            f"  patient_id={patient_id!r},\n"
+            f"  purposes_of_use={purposes_literal},\n"
+            "  scopes=['patient/*.read'],\n"
+            f"  lifetime_seconds={ttl_seconds},\n"
+            f"  issuer={issuer!r},\n"
+            "))\n"
+        )
+        remote_cmd = (
+            f"docker exec -i {shlex.quote(bff_container)} "
+            f"python3 -c {shlex.quote(mint_script)}"
+        )
+        try:
+            result = subprocess.run(
+                ["ssh", remote_host, remote_cmd],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            console.print(
+                f"[red]could not reach {remote_host!r}: {exc}.[/red]\n"
+                "Check `ssh "
+                f"{remote_host}` works from this terminal."
+            )
+            raise typer.Exit(code=1) from exc
+        if result.returncode != 0:
+            console.print(
+                f"[red]remote mint failed (exit={result.returncode}):[/red]\n"
+                f"  stderr: {result.stderr.strip() or '(empty)'}\n"
+                "Common causes: container "
+                f"{bff_container!r} not running, or COPILOT_BFF_JWT_SIGNING_KEY "
+                "not set in that container's environment."
+            )
+            raise typer.Exit(code=1)
+        token = result.stdout.strip()
+        if not token or token.count(".") != 2:
+            console.print(
+                f"[red]remote command returned a non-JWT value: {token!r}[/red]"
+            )
+            raise typer.Exit(code=1)
+        # Emit raw on stdout so $(...) capture gets the JWT unmolested.
+        # rich's console wraps long lines and inserts whitespace which
+        # corrupts a 400+ char JWT.
+        sys.stdout.write(token + "\n")
+        sys.stdout.flush()
+        return
+
+    if not signing_key:
+        console.print(
+            "[red]--signing-key (or COPILOT_BFF_JWT_SIGNING_KEY env var) is "
+            "required for a real token.[/red]\n"
+            "Fetch the value from the target deployment, e.g.:\n"
+            "  [cyan]ssh root@5.161.253.237 'grep COPILOT_BFF_JWT_SIGNING_KEY "
+            "/opt/openemr/.env'[/cyan]\n"
+            "then re-run, or pass [cyan]--synthetic[/cyan] for an offline "
+            "placeholder (not accepted by any real sidecar)."
+        )
+        raise typer.Exit(code=1)
+    if signing_key == "change-me-to-a-32-byte-hex-string":
+        console.print(
+            "[red]refusing to mint with the default signing key; "
+            "the sidecar rejects it on purpose.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    purpose_list = [p.strip() for p in purposes.split(",") if p.strip()]
+    if not purpose_list:
+        console.print("[red]--purposes must contain at least one entry.[/red]")
+        raise typer.Exit(code=1)
+
+    now_unix = int(_time.time())
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload: dict[str, object] = {
+        "iss": issuer,
+        "sub": user_id,
+        "patient_id": patient_id,
+        "purpose_of_use": purpose_list,
+        "scope": "patient/*.read",
+        "iat": now_unix,
+        "nbf": now_unix,
+        "exp": now_unix + ttl_seconds,
+        "jti": secrets.token_urlsafe(12),
+    }
+
+    def _b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    h_seg = _b64(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+    p_seg = _b64(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signing_input = f"{h_seg}.{p_seg}".encode("ascii")
+    sig = hmac.new(
+        signing_key.encode("utf-8"), signing_input, hashlib.sha256
+    ).digest()
+    s_seg = _b64(sig)
+    # Raw stdout to avoid rich's 80-char wrap mangling the JWT.
+    sys.stdout.write(f"{h_seg}.{p_seg}.{s_seg}\n")
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":
