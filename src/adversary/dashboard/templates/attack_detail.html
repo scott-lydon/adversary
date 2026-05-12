@@ -7,19 +7,36 @@
 <header class="panel p-6 my-6">
   <div class="flex items-center justify-between flex-wrap gap-3">
     <h1 class="text-2xl font-bold font-mono break-all">{{ attack.attack_id }}</h1>
-    <div class="flex gap-2">
+    <div class="flex gap-2 flex-wrap">
       <a href="/glossary/{{ attack.category }}" class="badge badge-info no-underline">{{ attack.category }}</a>
       <span class="badge badge-muted">{{ attack.subcategory }}</span>
+      <form method="post" action="/attacks/{{ attack.attack_id }}/replay" class="inline-block">
+        <button type="submit" class="badge badge-warn no-underline" style="cursor: pointer; font-weight: 600;" title="Re-run this attack now and persist a fresh verdict">
+          ↻ Replay
+        </button>
+      </form>
     </div>
   </div>
   <p class="muted text-sm mt-3">
     Generated {{ attack.created_at }} &middot;
     campaign <a href="/campaigns/{{ campaign_id }}" class="font-mono">{{ campaign_id }}</a>
+    {% if attack.target_id %}
+    &middot; against
+    {% with target_id=attack.target_id %}{% include '_target_badge.html' %}{% endwith %}
+    {% endif %}
   </p>
   <div class="mt-4 panel p-3" style="background: var(--panel2);">
     <div class="text-xs uppercase muted tracking-wider">Expected unsafe behavior</div>
     <div class="text-sm mt-1">{{ attack.expected_unsafe_behavior }}</div>
   </div>
+
+  {% if request.query_params.get('replayed') == 'ok' %}
+  <div class="panel p-3 mt-4 border-good" style="border-width: 1px; background: rgba(52, 211, 153, 0.08);">
+    Replayed.
+    New verdict: <span class="badge {% if request.query_params.get('new_verdict') == 'success' %}badge-bad{% elif request.query_params.get('new_verdict') == 'partial' %}badge-warn{% else %}badge-good{% endif %}">{{ request.query_params.get('new_verdict') }}</span>
+    confidence {{ request.query_params.get('confidence') }}. See the latest row in /verdicts.
+  </div>
+  {% endif %}
 </header>
 
 <h2 class="text-xl font-semibold mb-3">Prompt sequence</h2>

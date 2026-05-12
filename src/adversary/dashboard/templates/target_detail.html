@@ -100,6 +100,100 @@
   </div>
 </section>
 
+<!-- Run scan form -->
+<section class="panel p-6 mb-8" id="run-scan">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-lg font-semibold">Run a scan against this target</h2>
+    {% if target.allowlisted %}
+      <span class="badge badge-good">allowlisted</span>
+    {% else %}
+      <span class="badge badge-warn">allowlist first</span>
+    {% endif %}
+  </div>
+
+  {% if request.query_params.get('scanned') == 'ok' %}
+  <div class="panel p-4 mb-4 border-good" style="border-width: 1px; background: rgba(52, 211, 153, 0.08);">
+    Scan complete. {{ request.query_params.get('attacks', '?') }} attacks ran;
+    {{ request.query_params.get('exploits', '?') }} confirmed exploits.
+    See <a href="/campaigns?target={{ target.name }}" class="accent-text">campaigns</a> /
+    <a href="/findings?target={{ target.name }}" class="accent-text">findings</a>.
+  </div>
+  {% endif %}
+
+  {% if not target.allowlisted %}
+  <p class="text-sm muted mb-2">
+    This target is <span class="bad">not allowlisted</span> yet. Scans are blocked.
+    Use the <code>Allowlist this target</code> button above first; it's a deliberate
+    gate per ARCHITECTURE §9.
+  </p>
+  {% else %}
+  <p class="text-sm muted mb-4">
+    Submits a real scan against <code>{{ target.base_url }}</code>. For the
+    <code>scripted</code> provider this finishes in a couple of seconds; for
+    <code>live</code> it can take a minute and will spend real money on LLM
+    APIs (capped at $5).
+    {% if target.kind == 'clinical_copilot' %}
+    Because this target is an OpenEMR Co-Pilot, the form needs a live
+    <code>task_token</code> and a <code>patient_id</code> for the scanner to
+    talk to <code>/chat</code>. Mint a task token from a terminal:
+    <code>adversary debug mint-task-token --user-id admin --patient-id Patient/87413</code>.
+    {% endif %}
+  </p>
+  <form method="post" action="/targets/{{ target.name }}/scan" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <label class="block">
+      <span class="text-xs uppercase muted tracking-wider">Budget (USD)</span>
+      <input type="number" name="budget_usd" value="0.50" step="0.05" min="0.01" max="5.00"
+             class="w-full p-2 mt-1" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+    </label>
+    <label class="block">
+      <span class="text-xs uppercase muted tracking-wider">Max campaigns</span>
+      <input type="number" name="max_campaigns" value="3" min="1" max="10"
+             class="w-full p-2 mt-1" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+    </label>
+    <label class="block">
+      <span class="text-xs uppercase muted tracking-wider">Provider</span>
+      <select name="provider"
+              class="w-full p-2 mt-1" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+        <option value="scripted">scripted (deterministic, offline, $0)</option>
+        <option value="live">live (Llama / Claude / gpt-5, real cost)</option>
+      </select>
+    </label>
+    <label class="block">
+      <span class="text-xs uppercase muted tracking-wider">Seed (optional)</span>
+      <input type="text" name="seed" placeholder="42"
+             class="w-full p-2 mt-1" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+    </label>
+    {% if target.kind == 'clinical_copilot' or target.kind == 'http_chat' %}
+    <label class="block md:col-span-2">
+      <span class="text-xs uppercase muted tracking-wider">
+        Task token{% if target.kind == 'clinical_copilot' %} (required for /chat){% endif %}
+      </span>
+      <input type="password" name="task_token" autocomplete="off"
+             placeholder="paste your 5-min HS256 task JWT here"
+             class="w-full p-2 mt-1 font-mono text-xs" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+    </label>
+    <label class="block md:col-span-2">
+      <span class="text-xs uppercase muted tracking-wider">
+        Patient id{% if target.kind == 'clinical_copilot' %} (required){% endif %}
+      </span>
+      <input type="text" name="patient_id" placeholder="Patient/87413"
+             class="w-full p-2 mt-1 font-mono text-xs" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+    </label>
+    {% endif %}
+    <div class="md:col-span-2 flex items-center gap-3 mt-2">
+      <button type="submit"
+              class="px-5 py-2.5 rounded-lg font-medium no-underline"
+              style="background: var(--accent); color: white; cursor: pointer;">
+        Run scan now
+      </button>
+      <span class="text-xs muted">
+        The request blocks until the scan completes; ~2s for scripted, longer for live.
+      </span>
+    </div>
+  </form>
+  {% endif %}
+</section>
+
 <section class="panel p-5 mb-8">
   <div class="flex items-center justify-between mb-3">
     <h2 class="text-lg font-semibold">Recent campaigns</h2>

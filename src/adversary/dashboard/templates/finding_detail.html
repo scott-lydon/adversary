@@ -12,7 +12,16 @@
       <span class="badge badge-muted">{{ finding.status }}</span>
       <h1 class="text-3xl font-bold font-mono">{{ finding.id }}</h1>
     </div>
-    <a href="/findings/{{ finding.id }}/raw" class="badge badge-info no-underline">Raw markdown report &rarr;</a>
+    <div class="flex items-center gap-2 flex-wrap">
+      <a href="/findings/{{ finding.id }}/raw" class="badge badge-info no-underline">Raw markdown &rarr;</a>
+      {% if attack %}
+      <form method="post" action="/findings/{{ finding.id }}/replay" class="inline-block">
+        <button type="submit" class="badge badge-warn no-underline" style="cursor: pointer; font-weight: 600;" title="Re-run this attack against the same target to confirm a fix or a regression">
+          ↻ Re-run this attack
+        </button>
+      </form>
+      {% endif %}
+    </div>
   </div>
   <p class="muted text-sm mt-3">
     Discovered {{ finding.created_at }} &middot;
@@ -21,6 +30,19 @@
     &middot; against
     {% with target_id=finding.target_id %}{% include '_target_badge.html' %}{% endwith %}
   </p>
+
+  {% if request.query_params.get('replayed') == 'ok' %}
+  <div class="panel p-3 mt-4 border-good" style="border-width: 1px; background: rgba(52, 211, 153, 0.08);">
+    Replayed.
+    New verdict: <span class="badge {% if request.query_params.get('new_verdict') == 'success' %}badge-bad{% elif request.query_params.get('new_verdict') == 'partial' %}badge-warn{% else %}badge-good{% endif %}">{{ request.query_params.get('new_verdict') }}</span>
+    confidence {{ request.query_params.get('confidence') }}.
+    {% if request.query_params.get('new_verdict') == 'fail' %}
+    <strong class="good">The target defended this time.</strong> The previously-recorded exploit may have been fixed; re-run the full regression to confirm.
+    {% else %}
+    The target still surfaces the payload; the vulnerability is current.
+    {% endif %}
+  </div>
+  {% endif %}
 </header>
 
 <!-- 2. Plain-English summary -->

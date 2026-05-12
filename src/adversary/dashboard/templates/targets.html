@@ -2,18 +2,18 @@
 {% block title %}— Targets{% endblock %}
 {% block content %}
 
-<div class="flex items-center justify-between mb-6">
-  <div>
-    <h1 class="text-3xl font-bold">Targets</h1>
-    <p class="muted text-sm mt-1">
-      Every registered target the platform can attack. A target must be
-      <span class="badge badge-good">allowlisted</span> before any scan will run
-      against it. Per ARCHITECTURE §9 this gate prevents the platform from
-      becoming a denial-of-service weapon.
-    </p>
-  </div>
-  <a href="/targets/new" class="badge badge-info no-underline">+ Register a target</a>
-</div>
+<header class="mb-10">
+  <h1 class="text-3xl font-bold mb-3">Targets</h1>
+  <p class="muted text-sm leading-relaxed max-w-3xl mb-5">
+    Every registered target the platform can attack. A target must be
+    <span class="badge badge-good">allowlisted</span> before any scan will run
+    against it. Per ARCHITECTURE §9 this gate prevents the platform from
+    becoming a denial-of-service weapon.
+  </p>
+  <a href="/targets/new" class="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium no-underline" style="background: var(--accent); color: white;">
+    <span class="text-lg leading-none">+</span> Register a target
+  </a>
+</header>
 
 {% if targets %}
 <div class="grid grid-cols-1 md:grid-cols-2 gap-5">

@@ -1,8 +1,9 @@
 """FastAPI dashboard app and routes.
 
-The dashboard is read-only. Every route opens a fresh `SqliteStore`,
-queries it, and closes the connection. Templates render against the rows
-plus the encyclopedia in `adversary.categories`.
+Most routes are read-only — every request opens a fresh `SqliteStore`,
+queries it, closes the connection. The /scan and /replay routes also
+mutate state by invoking the same orchestrator the CLI uses; they sit
+behind the allowlist gate.
 """
 
 from __future__ import annotations
@@ -28,8 +29,19 @@ from adversary.models import (
     TargetKind,
     TargetSubmission,
 )
+from adversary.runners import (
+    AttackNotFound,
+    ProviderUnavailable,
+    RunnerError,
+    replay_attack,
+    run_scan_for_target,
+)
 from adversary.storage import SqliteStore
-from adversary.target import register_from_submission
+from adversary.target import (
+    TargetNotAllowlisted,
+    register_from_submission,
+    resolve_by_name,
+)
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -374,6 +386,180 @@ def create_app() -> FastAPI:
         store.set_reach_steps(row["id"], steps)
         store.close()
         return RedirectResponse(url=f"/targets/{name}", status_code=303)
+
+    @app.post("/targets/{name}/scan")
+    async def target_run_scan(
+        name: str,
+        budget_usd: float = Form(0.50),
+        max_campaigns: int = Form(3),
+        provider: str = Form("scripted"),
+        seed: str = Form(""),
+        task_token: str = Form(""),
+        patient_id: str = Form(""),
+    ) -> Any:
+        """Run a real scan against this target.
+
+        Inputs are form-encoded. The store row is resolved via the registry
+        (not by re-trusting the URL), the allowlist gate is enforced, and
+        the orchestrator runs in-process. For scripted scans this returns
+        within a couple of seconds; for live-LLM scans the request may
+        block for tens of seconds. We block intentionally for the local
+        single-user dashboard — the production multi-tenant path is the
+        CLI.
+        """
+        store = _store()
+        record = resolve_by_name(store, name)
+        if record is None:
+            store.close()
+            raise HTTPException(
+                status_code=404, detail=f"no target named {name!r}."
+            )
+        # Soft-clamp budget so a stray form submission can't burn $$$.
+        budget_usd = max(0.01, min(budget_usd, 5.00))
+        max_campaigns = max(1, min(max_campaigns, 10))
+        seed_int: int | None
+        if seed.strip():
+            try:
+                seed_int = int(seed.strip())
+            except ValueError:
+                store.close()
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"seed must be an integer, got {seed!r}. Leave the "
+                        "field blank for a random seed."
+                    ),
+                )
+        else:
+            seed_int = None
+        try:
+            outcomes = await run_scan_for_target(
+                store=store,
+                record=record,
+                budget_usd=budget_usd,
+                max_campaigns=max_campaigns,
+                provider_name=provider,
+                seed=seed_int,
+                task_token=task_token.strip() or None,
+                patient_id=patient_id.strip() or None,
+                reports_dir=Path("vulnerability-reports"),
+            )
+        except TargetNotAllowlisted as exc:
+            store.close()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ProviderUnavailable as exc:
+            store.close()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            store.close()
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"could not start scan against {name!r}: {exc}. "
+                    "For the clinical_copilot kind you usually need a "
+                    "non-empty task_token and patient_id."
+                ),
+            ) from exc
+        except RunnerError as exc:
+            store.close()
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            # store stays open through run_scan_for_target; close here
+            # only if exceptions skipped the normal path.
+            pass
+
+        total_attacks = sum(o.attacks_run for o in outcomes)
+        total_success = sum(o.successes for o in outcomes)
+        store.close()
+        return RedirectResponse(
+            url=(
+                f"/campaigns?target={name}&scanned=ok"
+                f"&attacks={total_attacks}&exploits={total_success}"
+            ),
+            status_code=303,
+        )
+
+    @app.post("/attacks/{attack_id}/replay")
+    async def attack_replay(
+        attack_id: str,
+        task_token: str = Form(""),
+        patient_id: str = Form(""),
+    ) -> Any:
+        """Replay a single previously-persisted attack."""
+        store = _store()
+        try:
+            summary = await replay_attack(
+                store=store,
+                attack_id=attack_id,
+                task_token=task_token.strip() or None,
+                patient_id=patient_id.strip() or None,
+            )
+        except AttackNotFound as exc:
+            store.close()
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except TargetNotAllowlisted as exc:
+            store.close()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            store.close()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        store.close()
+        return RedirectResponse(
+            url=(
+                f"/attacks/{attack_id}?replayed=ok"
+                f"&new_verdict={summary['new_verdict']}"
+                f"&confidence={summary['confidence']:.2f}"
+            ),
+            status_code=303,
+        )
+
+    @app.post("/findings/{finding_id}/replay")
+    async def finding_replay(
+        finding_id: str,
+        task_token: str = Form(""),
+        patient_id: str = Form(""),
+    ) -> Any:
+        """Re-run the underlying attack of a finding to confirm a fix or
+        regression."""
+        store = _store()
+        row = store.conn.execute(
+            "SELECT lineage_root FROM findings WHERE id=?", (finding_id,)
+        ).fetchone()
+        if not row or not row["lineage_root"]:
+            store.close()
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no replayable attack for finding {finding_id!r} "
+                    "(lineage_root is empty)."
+                ),
+            )
+        attack_id = row["lineage_root"]
+        try:
+            summary = await replay_attack(
+                store=store,
+                attack_id=attack_id,
+                task_token=task_token.strip() or None,
+                patient_id=patient_id.strip() or None,
+            )
+        except AttackNotFound as exc:
+            store.close()
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except TargetNotAllowlisted as exc:
+            store.close()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            store.close()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        store.close()
+        return RedirectResponse(
+            url=(
+                f"/findings/{finding_id}?replayed=ok"
+                f"&new_verdict={summary['new_verdict']}"
+                f"&confidence={summary['confidence']:.2f}"
+            ),
+            status_code=303,
+        )
 
     # -----------------------------------------------------------------
     # Findings + finding detail
