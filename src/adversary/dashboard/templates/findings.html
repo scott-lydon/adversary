@@ -21,32 +21,51 @@
   </div>
 </div>
 
+{% if target_filter %}
+<div class="mb-4 flex items-center gap-2">
+  <span class="muted text-sm">Filtering by target</span>
+  <a href="/targets/{{ target_filter }}" class="badge badge-info no-underline">{{ target_filter }}</a>
+  <a href="/findings{% if severity_filter %}?severity={{ severity_filter }}{% endif %}" class="text-xs muted">clear target filter</a>
+</div>
+{% endif %}
+
 {% if findings %}
-<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-  {% for f in findings %}
-  {% if f.severity == 'Critical' or f.severity == 'High' %}{% set cls = 'badge-bad' %}
-  {% elif f.severity == 'Medium' %}{% set cls = 'badge-warn' %}
-  {% else %}{% set cls = 'badge-muted' %}{% endif %}
-  <div class="panel panel-hover p-5">
-    <div class="flex items-center justify-between mb-3">
-      <div class="flex items-center gap-2">
-        <span class="badge {{ cls }}">{{ f.severity }}</span>
-        <span class="badge badge-muted">{{ f.status }}</span>
-      </div>
-      <span class="text-xs muted font-mono">{{ f.id }}</span>
-    </div>
-    <h3 class="text-lg font-semibold mb-1">
-      <a href="/glossary/{{ f.category }}" class="no-underline">{{ f.category }}</a>
-      <span class="muted">/</span>
-      <a href="/glossary/{{ f.category }}#{{ f.subcategory }}" class="no-underline">{{ f.subcategory }}</a>
-    </h3>
-    <p class="text-xs muted mb-4">{{ f.created_at }} &middot; target: <code>{{ f.target_version_when_discovered or 'unknown' }}</code></p>
-    <div class="flex gap-2">
-      <a href="/findings/{{ f.id }}" class="badge badge-info">View chain</a>
-      <a href="/findings/{{ f.id }}/raw" class="badge badge-muted">Raw markdown</a>
-    </div>
-  </div>
-  {% endfor %}
+<div class="panel p-0 overflow-hidden mb-6">
+  <table>
+    <thead>
+      <tr>
+        <th>Severity</th>
+        <th>Target</th>
+        <th>Category</th>
+        <th>Subcategory</th>
+        <th>Created</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in findings %}
+      {% if f.severity == 'Critical' or f.severity == 'High' %}{% set cls = 'badge-bad' %}
+      {% elif f.severity == 'Medium' %}{% set cls = 'badge-warn' %}
+      {% else %}{% set cls = 'badge-muted' %}{% endif %}
+      <tr>
+        <td>
+          <span class="badge {{ cls }}">{{ f.severity }}</span>
+          <span class="badge badge-muted">{{ f.status }}</span>
+        </td>
+        <td>
+          {% with target_id=f.target_id %}{% include '_target_badge.html' %}{% endwith %}
+        </td>
+        <td><a href="/glossary/{{ f.category }}" class="no-underline">{{ f.category }}</a></td>
+        <td><code class="text-xs">{{ f.subcategory }}</code></td>
+        <td class="text-xs muted">{{ f.created_at }}</td>
+        <td>
+          <a href="/findings/{{ f.id }}" class="badge badge-info">View chain</a>
+          <a href="/findings/{{ f.id }}/raw" class="badge badge-muted">Raw</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 {% else %}
 <div class="panel p-6 muted">No findings yet. Run a scan first.</div>

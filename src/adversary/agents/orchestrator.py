@@ -30,6 +30,7 @@ from adversary.models import (
     Attack,
     AttackCategory,
     CampaignBrief,
+    TargetRecord,
     TargetResponse,
     Verdict,
     VerdictLabel,
@@ -116,6 +117,7 @@ class OrchestratorAgent:
         budget_usd: float = 1.0,
         max_campaigns: int = 3,
         seed: int | None = None,
+        target_record: TargetRecord | None = None,
     ) -> None:
         self.adapter = adapter
         self.provider = provider
@@ -124,10 +126,19 @@ class OrchestratorAgent:
         self.budget_usd = budget_usd
         self.max_campaigns = max_campaigns
         self.seed = seed
+        self.target_record = target_record
         self.red_team = RedTeamAgent(provider)
         self.judge = JudgeAgent(provider)
         self.documentation = DocumentationAgent(provider)
         self.spent_usd = 0.0
+
+    @property
+    def target_id(self) -> str | None:
+        return self.target_record.id if self.target_record else None
+
+    @property
+    def target_name(self) -> str | None:
+        return self.target_record.name if self.target_record else None
 
     # --- selection -------------------------------------------------------
 
@@ -213,6 +224,8 @@ class OrchestratorAgent:
                 "campaign_id": campaign_id,
                 "category": category.value,
                 "subcategory": subcategory,
+                "target_id": self.target_id,
+                "target_name": self.target_name,
             },
             occurred_at=_utcnow(),
         )
@@ -227,6 +240,7 @@ class OrchestratorAgent:
                 "tokens_out": 0,
                 "error": None,
                 "created_at": _utcnow(),
+                "target_id": self.target_id,
             }
         )
 
@@ -245,7 +259,9 @@ class OrchestratorAgent:
                 session, attack.prompt_sequence
             )
             responses_q.append((attack, response))
-            self.store.insert_attack(attack.model_dump(), _utcnow())
+            self.store.insert_attack(
+                attack.model_dump(), _utcnow(), target_id=self.target_id
+            )
             # Persist the full request + response transcript so the
             # /findings/{id} chain page can render what was actually sent
             # and what came back, not just hashes. trace_id == attack_id
@@ -261,6 +277,8 @@ class OrchestratorAgent:
                         "campaign_id": campaign_id,
                         "attack_id": attack.attack_id,
                         "target_url": self.adapter.url,
+                        "target_id": self.target_id,
+                        "target_name": self.target_name,
                         "request": {
                             "session_id": session.session_id,
                             "user_id": session.user_id,
@@ -285,6 +303,8 @@ class OrchestratorAgent:
                 payload={
                     "attack_id": attack.attack_id,
                     "response_hash": _hash_response(response),
+                    "target_id": self.target_id,
+                    "target_name": self.target_name,
                 },
                 occurred_at=_utcnow(),
             )
@@ -323,6 +343,8 @@ class OrchestratorAgent:
                     "attack_id": attack.attack_id,
                     "verdict": verdict.verdict.value,
                     "confidence": verdict.confidence,
+                    "target_id": self.target_id,
+                    "target_name": self.target_name,
                 },
                 occurred_at=_utcnow(),
             )
@@ -375,6 +397,7 @@ class OrchestratorAgent:
                     "lineage_root": exploit["attack"]["attack_id"],
                     "report_path": str(report_path),
                     "created_at": _utcnow(),
+                    "target_id": self.target_id,
                 }
             )
             self.store.append_audit(
@@ -383,6 +406,8 @@ class OrchestratorAgent:
                 payload={
                     "report_id": exploit.get("report_id", report_path.stem),
                     "path": str(report_path),
+                    "target_id": self.target_id,
+                    "target_name": self.target_name,
                 },
                 occurred_at=_utcnow(),
             )

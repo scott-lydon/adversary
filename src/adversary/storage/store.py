@@ -21,6 +21,7 @@ REQUIRED_TABLES: tuple[str, ...] = (
     "audit_log",
     "attacks",
     "regression_records",
+    "targets",
 )
 
 
@@ -127,7 +128,35 @@ _SCHEMA: dict[str, str] = {
             variants_count INTEGER NOT NULL DEFAULT 0
         )
     """,
+    "targets": """
+        CREATE TABLE IF NOT EXISTS targets (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            kind TEXT NOT NULL,
+            base_url TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            reach_steps_json TEXT NOT NULL DEFAULT '[]',
+            auth_kind TEXT NOT NULL DEFAULT 'none',
+            auth_secret_encrypted BLOB,
+            auth_meta_json TEXT NOT NULL DEFAULT '{}',
+            allowlisted INTEGER NOT NULL DEFAULT 0,
+            registered_at TEXT NOT NULL,
+            last_used_at TEXT
+        )
+    """,
 }
+
+
+# Additive columns added after the original schema was published. Each row
+# is (table_name, column_name, ddl_fragment). ``_ensure_additive_columns``
+# only adds a column when ``PRAGMA table_info`` does not already list it,
+# so re-running on an already-migrated database is a no-op.
+_ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("findings", "target_id", "TEXT"),
+    ("attacks", "target_id", "TEXT"),
+    ("agent_runs", "target_id", "TEXT"),
+    ("regression_records", "target_id", "TEXT"),
+)
 
 
 def canonical_json(payload: Any) -> str:
@@ -158,6 +187,103 @@ class SqliteStore:
     def init_schema(self) -> None:
         for table, ddl in _SCHEMA.items():
             self.conn.execute(ddl)
+        self._ensure_additive_columns()
+        self.conn.commit()
+        self._seed_default_targets()
+
+    def _ensure_additive_columns(self) -> None:
+        """Apply ALTER TABLE ADD COLUMN for columns added post-launch.
+
+        Existing databases pre-date these columns; running on a fresh
+        schema is a no-op because ``PRAGMA table_info`` already lists
+        them. Never drops or renames; strictly additive.
+        """
+        for table, column, ddl_type in _ADDITIVE_COLUMNS:
+            cols = {
+                row["name"]
+                for row in self.conn.execute(f"PRAGMA table_info({table})")
+            }
+            if column not in cols:
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"
+                )
+
+    def _seed_default_targets(self) -> None:
+        """Idempotent: insert the two seed rows if they are missing.
+
+        Re-running ``init_schema`` does not duplicate rows because both
+        seeds have a UNIQUE name; we use INSERT OR IGNORE keyed on name.
+        """
+        # Local import to avoid a circular import at module load.
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        seeds: tuple[dict[str, Any], ...] = (
+            {
+                "id": "tgt-echo-demo",
+                "name": "echo-demo",
+                "kind": "echo",
+                "base_url": "echo://demo",
+                "description": (
+                    "Local in-process intentionally-vulnerable demo target "
+                    "no network, no LLM keys."
+                ),
+                "reach_steps_json": canonical_json(
+                    [
+                        "Run `adversary scan --target-name echo-demo`.",
+                        "Inspect findings on the dashboard.",
+                    ]
+                ),
+                "auth_kind": "none",
+                "auth_meta_json": "{}",
+                "allowlisted": 1,
+                "registered_at": now,
+            },
+            {
+                "id": "tgt-clinical-copilot-hetzner",
+                "name": "clinical-copilot-hetzner",
+                "kind": "clinical_copilot",
+                "base_url": "http://5.161.253.237",
+                "description": (
+                    "OpenEMR fork with Clinical Co-Pilot sidecar Week 1/2 "
+                    "Gauntlet deliverable. Requires --task-token and "
+                    "--patient-id at scan time."
+                ),
+                "reach_steps_json": canonical_json(
+                    [
+                        "Open OpenEMR at http://5.161.253.237",
+                        "Log in as admin",
+                        "Launch the Co-Pilot from the patient chart action bar",
+                        "Pick patient Patient/87413",
+                        "Select purpose Pre-visit cross-check (Use Case A)",
+                    ]
+                ),
+                "auth_kind": "none",
+                "auth_meta_json": "{}",
+                "allowlisted": 0,
+                "registered_at": now,
+            },
+        )
+        for s in seeds:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO targets "
+                "(id, name, kind, base_url, description, reach_steps_json, "
+                "auth_kind, auth_secret_encrypted, auth_meta_json, "
+                "allowlisted, registered_at, last_used_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL)",
+                (
+                    s["id"],
+                    s["name"],
+                    s["kind"],
+                    s["base_url"],
+                    s["description"],
+                    s["reach_steps_json"],
+                    s["auth_kind"],
+                    s["auth_meta_json"],
+                    s["allowlisted"],
+                    s["registered_at"],
+                ),
+            )
         self.conn.commit()
 
     def reset(self) -> None:
@@ -254,13 +380,18 @@ class SqliteStore:
             )
         self.conn.commit()
 
-    def insert_attack(self, attack_dict: dict[str, Any], created_at: str) -> None:
+    def insert_attack(
+        self,
+        attack_dict: dict[str, Any],
+        created_at: str,
+        target_id: str | None = None,
+    ) -> None:
         self.conn.execute(
             "INSERT OR REPLACE INTO attacks "
             "(attack_id, category, subcategory, prompt_sequence_json, "
             "expected_unsafe_behavior, mutation_lineage_json, "
-            "generation_metadata_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "generation_metadata_json, created_at, target_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 attack_dict["attack_id"],
                 attack_dict["category"],
@@ -270,6 +401,7 @@ class SqliteStore:
                 canonical_json(attack_dict.get("mutation_lineage", [])),
                 canonical_json(attack_dict.get("generation_metadata", {})),
                 created_at,
+                target_id,
             ),
         )
         self.conn.commit()
@@ -307,8 +439,8 @@ class SqliteStore:
             "INSERT OR REPLACE INTO findings "
             "(id, severity, category, subcategory, status, "
             "target_version_when_discovered, target_version_when_resolved, "
-            "lineage_root, report_path, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "lineage_root, report_path, created_at, target_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 finding["id"],
                 finding["severity"],
@@ -320,6 +452,7 @@ class SqliteStore:
                 finding.get("lineage_root"),
                 finding.get("report_path"),
                 finding["created_at"],
+                finding.get("target_id"),
             ),
         )
         self.conn.commit()
@@ -328,8 +461,8 @@ class SqliteStore:
         self.conn.execute(
             "INSERT INTO agent_runs "
             "(agent, model, session_id, dollar_cost, latency_ms, "
-            "tokens_in, tokens_out, error, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "tokens_in, tokens_out, error, created_at, target_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run["agent"],
                 run["model"],
@@ -340,6 +473,7 @@ class SqliteStore:
                 run.get("tokens_out", 0),
                 run.get("error"),
                 run["created_at"],
+                run.get("target_id"),
             ),
         )
         self.conn.commit()
@@ -359,6 +493,150 @@ class SqliteStore:
             ),
         )
         self.conn.commit()
+
+    # --- targets ---------------------------------------------------------
+
+    def register_target(
+        self,
+        *,
+        id: str,
+        name: str,
+        kind: str,
+        base_url: str,
+        description: str,
+        reach_steps: list[str],
+        auth_kind: str,
+        auth_meta: dict[str, Any],
+        auth_secret_encrypted: bytes | None,
+        allowlisted: bool,
+        registered_at: str,
+    ) -> None:
+        """Insert a new target. Raises sqlite3.IntegrityError on duplicate name."""
+        self.conn.execute(
+            "INSERT INTO targets "
+            "(id, name, kind, base_url, description, reach_steps_json, "
+            "auth_kind, auth_secret_encrypted, auth_meta_json, allowlisted, "
+            "registered_at, last_used_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            (
+                id,
+                name,
+                kind,
+                base_url,
+                description,
+                canonical_json(reach_steps),
+                auth_kind,
+                auth_secret_encrypted,
+                canonical_json(auth_meta),
+                1 if allowlisted else 0,
+                registered_at,
+            ),
+        )
+        self.conn.commit()
+
+    def get_target(self, id_or_name: str) -> dict[str, Any] | None:
+        """Look up a target by id or name. Returns the raw row as a dict.
+
+        The encrypted credential is NOT included in the returned dict
+        (callers that need the cleartext must explicitly call
+        ``get_target_secret_ciphertext``).
+        """
+        row = self.conn.execute(
+            "SELECT id, name, kind, base_url, description, reach_steps_json, "
+            "auth_kind, auth_meta_json, allowlisted, registered_at, "
+            "last_used_at FROM targets WHERE id=? OR name=? LIMIT 1",
+            (id_or_name, id_or_name),
+        ).fetchone()
+        if row is None:
+            return None
+        out = dict(row)
+        out["reach_steps"] = json.loads(out.pop("reach_steps_json") or "[]")
+        out["auth_meta"] = json.loads(out.pop("auth_meta_json") or "{}")
+        out["allowlisted"] = bool(out["allowlisted"])
+        return out
+
+    def get_target_secret_ciphertext(self, target_id: str) -> bytes | None:
+        row = self.conn.execute(
+            "SELECT auth_secret_encrypted FROM targets WHERE id=?",
+            (target_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        val = row["auth_secret_encrypted"]
+        if val is None:
+            return None
+        return bytes(val)
+
+    def list_targets(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT id, name, kind, base_url, description, reach_steps_json, "
+            "auth_kind, auth_meta_json, allowlisted, registered_at, "
+            "last_used_at FROM targets ORDER BY registered_at ASC"
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = dict(r)
+            d["reach_steps"] = json.loads(d.pop("reach_steps_json") or "[]")
+            d["auth_meta"] = json.loads(d.pop("auth_meta_json") or "{}")
+            d["allowlisted"] = bool(d["allowlisted"])
+            out.append(d)
+        return out
+
+    def set_allowlisted(self, target_id: str, value: bool) -> None:
+        self.conn.execute(
+            "UPDATE targets SET allowlisted=? WHERE id=?",
+            (1 if value else 0, target_id),
+        )
+        self.conn.commit()
+
+    def set_reach_steps(self, target_id: str, steps: list[str]) -> None:
+        self.conn.execute(
+            "UPDATE targets SET reach_steps_json=? WHERE id=?",
+            (canonical_json(steps), target_id),
+        )
+        self.conn.commit()
+
+    def touch_target(self, target_id: str, *, used_at: str) -> None:
+        self.conn.execute(
+            "UPDATE targets SET last_used_at=? WHERE id=?",
+            (used_at, target_id),
+        )
+        self.conn.commit()
+
+    def delete_target(self, target_id: str) -> None:
+        """Refuse if any findings/attacks reference this target_id."""
+        f_count = self.conn.execute(
+            "SELECT COUNT(*) FROM findings WHERE target_id=?", (target_id,)
+        ).fetchone()[0]
+        a_count = self.conn.execute(
+            "SELECT COUNT(*) FROM attacks WHERE target_id=?", (target_id,)
+        ).fetchone()[0]
+        if f_count or a_count:
+            raise ValueError(
+                f"Cannot remove target {target_id!r}: "
+                f"{f_count} finding(s) and {a_count} attack(s) reference it. "
+                "Targets are kept for audit traceability once they have been "
+                "scanned. Run `adversary status --reset-db` to wipe everything "
+                "if you really want to start over."
+            )
+        self.conn.execute("DELETE FROM targets WHERE id=?", (target_id,))
+        self.conn.commit()
+
+    def target_stats(self, target_id: str) -> dict[str, int]:
+        f = self.conn.execute(
+            "SELECT COUNT(*) FROM findings WHERE target_id=?", (target_id,)
+        ).fetchone()[0]
+        a = self.conn.execute(
+            "SELECT COUNT(*) FROM attacks WHERE target_id=?", (target_id,)
+        ).fetchone()[0]
+        # campaigns count: distinct orchestrator session_ids whose target_id
+        # column matches.
+        c = self.conn.execute(
+            "SELECT COUNT(DISTINCT session_id) FROM agent_runs "
+            "WHERE agent='orchestrator' AND target_id=?",
+            (target_id,),
+        ).fetchone()[0]
+        return {"campaigns": int(c), "attacks": int(a), "findings": int(f)}
 
     # --- summaries -------------------------------------------------------
 
@@ -384,6 +662,7 @@ class SqliteStore:
         total_cost = scalar("SELECT COALESCE(SUM(dollar_cost), 0.0) FROM agent_runs")
         head_hash = self.head_hash()
         audit_rows = scalar("SELECT COUNT(*) FROM audit_log")
+        targets_total = scalar("SELECT COUNT(*) FROM targets")
         return {
             "campaigns": int(campaigns),
             "attacks": int(attacks),
@@ -392,4 +671,5 @@ class SqliteStore:
             "total_dollar_cost": float(total_cost),
             "audit_head_hash": head_hash,
             "audit_rows": int(audit_rows),
+            "targets_total": int(targets_total),
         }

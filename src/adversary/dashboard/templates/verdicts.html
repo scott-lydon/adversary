@@ -11,12 +11,21 @@
   itself.
 </p>
 
+{% if target_filter %}
+<div class="mb-4 flex items-center gap-2">
+  <span class="muted text-sm">Target filter:</span>
+  <a href="/targets/{{ target_filter }}" class="badge badge-info no-underline">{{ target_filter }}</a>
+  <a href="/verdicts" class="text-xs muted">clear</a>
+</div>
+{% endif %}
+
 {% if verdicts %}
 <div class="panel p-0 overflow-hidden">
   <table>
     <thead>
       <tr>
         <th>Attack</th>
+        <th>Target</th>
         <th>Verdict <span class="muted font-normal text-xs">(success = attack won)</span></th>
         <th class="text-right">Confidence</th>
         <th>Evidence</th>
@@ -32,6 +41,7 @@
       {% else %}{% set vcls = 'badge-good' %}{% endif %}
       <tr>
         <td><a class="font-mono text-xs" href="/attacks/{{ v.attack_id }}">{{ v.attack_id }}</a></td>
+        <td>{% with target_id=v.target_id %}{% include '_target_badge.html' %}{% endwith %}</td>
         <td><span class="badge {{ vcls }}">{{ v.verdict }}</span></td>
         <td class="text-right">{{ "%.2f"|format(v.confidence) }}</td>
         <td class="text-sm">

@@ -8,6 +8,14 @@
   Red Team / Target / Judge / Documentation loop.
 </p>
 
+{% if target_filter %}
+<div class="mb-4 flex items-center gap-2">
+  <span class="muted text-sm">Target filter:</span>
+  <a href="/targets/{{ target_filter }}" class="badge badge-info no-underline">{{ target_filter }}</a>
+  <a href="/campaigns" class="text-xs muted">clear</a>
+</div>
+{% endif %}
+
 {% if campaigns %}
 <div class="panel p-0 overflow-hidden">
   <table>
@@ -15,6 +23,7 @@
       <tr>
         <th>Campaign ID</th>
         <th>Started</th>
+        <th>Target</th>
         <th>Category</th>
         <th class="text-right">Attacks</th>
         <th class="text-right bad">Success</th>
@@ -30,6 +39,7 @@
           <a href="/campaigns/{{ c.session_id }}" class="font-mono text-xs">{{ c.session_id }}</a>
         </td>
         <td class="text-xs muted">{{ c.created_at }}</td>
+        <td>{% with target_id=c.target_id %}{% include '_target_badge.html' %}{% endwith %}</td>
         <td>
           {% if c.category %}
           <a href="/glossary/{{ c.category }}" class="no-underline">{{ c.category }}</a>

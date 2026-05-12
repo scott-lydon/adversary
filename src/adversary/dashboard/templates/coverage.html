@@ -8,6 +8,17 @@
   runs where the target successfully defended (verdict = fail).
 </p>
 
+<div class="mb-4 flex items-center gap-2 flex-wrap">
+  {% if target_filter %}
+    <span class="muted text-sm">Target filter:</span>
+    <a href="/targets/{{ target_filter }}" class="badge badge-info no-underline">{{ target_filter }}</a>
+    <a href="/coverage" class="text-xs muted">clear</a>
+  {% else %}
+    <span class="badge badge-muted">Showing all targets</span>
+    <span class="muted text-xs">add <code>?target=&lt;name&gt;</code> to filter</span>
+  {% endif %}
+</div>
+
 {% if rows %}
 <div class="panel p-0 overflow-hidden">
   <table>

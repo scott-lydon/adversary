@@ -10,6 +10,14 @@
   follows.
 </p>
 
+{% if target_filter %}
+<div class="mb-4 flex items-center gap-2">
+  <span class="muted text-sm">Target filter:</span>
+  <a href="/targets/{{ target_filter }}" class="badge badge-info no-underline">{{ target_filter }}</a>
+  <a href="/audit" class="text-xs muted">clear</a>
+</div>
+{% endif %}
+
 {% if rows %}
 <div class="panel p-0 overflow-hidden">
   <table>
@@ -19,6 +27,7 @@
         <th>Occurred at</th>
         <th>Agent</th>
         <th>Action</th>
+        <th>Target</th>
         <th>prev_hash</th>
         <th>this_hash</th>
       </tr>
@@ -30,6 +39,7 @@
         <td class="text-xs muted">{{ r.occurred_at }}</td>
         <td><span class="agent-badge agent-{{ r.agent }}">{{ r.agent }}</span></td>
         <td><code>{{ r.action }}</code></td>
+        <td>{% with target_id=r.target_id %}{% include '_target_badge.html' %}{% endwith %}</td>
         <td class="text-xs font-mono muted">{{ r.prev_hash[:16] }}…</td>
         <td class="text-xs font-mono muted">{{ r.this_hash[:16] }}…</td>
       </tr>

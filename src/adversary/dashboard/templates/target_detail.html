@@ -1,0 +1,154 @@
+{% extends "_base.html" %}
+{% block title %}— {{ target.name }}{% endblock %}
+{% block content %}
+
+<a href="/targets" class="text-sm muted">&larr; targets</a>
+
+<header class="panel p-6 my-6">
+  <div class="flex items-center gap-3 flex-wrap mb-3">
+    <span class="badge badge-info">{{ target.kind }}</span>
+    {% if target.allowlisted %}
+      <span class="badge badge-good">allowlisted</span>
+    {% else %}
+      <span class="badge badge-warn">unconfirmed</span>
+    {% endif %}
+    <h1 class="text-3xl font-bold">{{ target.name }}</h1>
+  </div>
+  <p class="muted text-sm font-mono break-all">{{ target.base_url }}</p>
+  {% if target.description %}
+  <p class="text-sm leading-relaxed mt-3">{{ target.description }}</p>
+  {% endif %}
+</header>
+
+<section class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+  <div class="panel p-5">
+    <div class="text-xs uppercase muted tracking-wider">Campaigns</div>
+    <div class="text-3xl font-bold accent-text mt-1">{{ stats.campaigns }}</div>
+  </div>
+  <div class="panel p-5">
+    <div class="text-xs uppercase muted tracking-wider">Attacks</div>
+    <div class="text-3xl font-bold accent-text mt-1">{{ stats.attacks }}</div>
+  </div>
+  <div class="panel p-5">
+    <div class="text-xs uppercase muted tracking-wider">Findings</div>
+    <div class="text-3xl font-bold bad mt-1">{{ stats.findings }}</div>
+  </div>
+</section>
+
+<section class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+  <div class="panel p-5">
+    <h2 class="text-lg font-semibold mb-3">Metadata</h2>
+    <ul class="text-sm space-y-2">
+      <li><span class="muted">id:</span> <code>{{ target.id }}</code></li>
+      <li><span class="muted">kind:</span> <code>{{ target.kind }}</code></li>
+      <li><span class="muted">base_url:</span> <code class="break-all">{{ target.base_url }}</code></li>
+      <li><span class="muted">auth_kind:</span> <code>{{ target.auth_kind }}</code></li>
+      {% if target.auth_meta %}
+      <li>
+        <span class="muted">auth_meta:</span>
+        <code class="break-all">{{ target.auth_meta }}</code>
+        <span class="muted text-xs">(non-secret metadata; the credential itself is encrypted at rest and never rendered)</span>
+      </li>
+      {% endif %}
+      <li><span class="muted">registered_at:</span> <code>{{ target.registered_at }}</code></li>
+      <li><span class="muted">last_used_at:</span> <code>{{ target.last_used_at or '—' }}</code></li>
+      <li>
+        <span class="muted">allowlisted:</span>
+        {% if target.allowlisted %}
+          <span class="badge badge-good">yes</span>
+        {% else %}
+          <span class="badge badge-warn">no</span>
+        {% endif %}
+      </li>
+    </ul>
+
+    {% if not target.allowlisted %}
+    <form method="post" action="/targets/{{ target.name }}/allowlist" class="mt-4">
+      <button type="submit" class="badge badge-good no-underline" style="cursor: pointer; background: rgba(52, 211, 153, 0.15); border-color: rgba(52, 211, 153, 0.3);">
+        Allowlist this target
+      </button>
+      <p class="text-xs muted mt-2">
+        Allowlisting confirms you are authorized to attack this URL.
+        Required before scans run against it.
+      </p>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="panel p-5">
+    <h2 class="text-lg font-semibold mb-3">Reach steps</h2>
+    {% if target.reach_steps %}
+    <ol class="text-sm space-y-2 list-decimal list-inside">
+      {% for step in target.reach_steps %}
+      <li><span class="muted">{{ step }}</span></li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="text-sm muted">No reach steps recorded yet.</p>
+    {% endif %}
+
+    <details class="mt-4">
+      <summary class="cursor-pointer text-xs accent-text">Edit reach steps</summary>
+      <form method="post" action="/targets/{{ target.name }}/reach-steps" class="mt-3">
+        <textarea name="reach_steps_text" rows="6" class="w-full p-3 text-sm font-mono"
+          style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">{% for step in target.reach_steps %}{{ step }}
+{% endfor %}</textarea>
+        <p class="text-xs muted mt-1">One step per line.</p>
+        <button type="submit" class="badge badge-info mt-2" style="cursor: pointer;">Save</button>
+      </form>
+    </details>
+  </div>
+</section>
+
+<section class="panel p-5 mb-8">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-lg font-semibold">Recent campaigns</h2>
+    <a href="/campaigns?target={{ target.name }}" class="text-sm">view all</a>
+  </div>
+  {% if recent_campaigns %}
+  <table>
+    <thead><tr><th>session_id</th><th>started</th></tr></thead>
+    <tbody>
+      {% for r in recent_campaigns %}
+      <tr>
+        <td><a class="font-mono text-xs" href="/campaigns/{{ r.session_id }}">{{ r.session_id }}</a></td>
+        <td class="text-xs muted">{{ r.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-sm muted">No campaigns recorded against this target yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel p-5">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-lg font-semibold">Recent findings</h2>
+    <a href="/findings?target={{ target.name }}" class="text-sm">view all</a>
+  </div>
+  {% if recent_findings %}
+  <table>
+    <thead><tr><th>id</th><th>severity</th><th>category</th><th>created</th></tr></thead>
+    <tbody>
+      {% for f in recent_findings %}
+      <tr>
+        <td><a class="font-mono text-xs" href="/findings/{{ f.id }}">{{ f.id }}</a></td>
+        <td>
+          {% if f.severity in ['Critical', 'High'] %}{% set cls = 'badge-bad' %}
+          {% elif f.severity == 'Medium' %}{% set cls = 'badge-warn' %}
+          {% else %}{% set cls = 'badge-muted' %}{% endif %}
+          <span class="badge {{ cls }}">{{ f.severity }}</span>
+        </td>
+        <td><code>{{ f.category }}</code></td>
+        <td class="text-xs muted">{{ f.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-sm muted">No findings against this target yet.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

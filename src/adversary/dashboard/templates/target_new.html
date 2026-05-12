@@ -1,0 +1,183 @@
+{% extends "_base.html" %}
+{% block title %}— Register a target{% endblock %}
+{% block content %}
+
+<a href="/targets" class="text-sm muted">&larr; targets</a>
+
+<h1 class="text-3xl font-bold my-6">Register a target</h1>
+<p class="muted text-sm mb-6">
+  Register a website or LLM-fronted product the platform may attack.
+  Credentials are encrypted at rest with Fernet and never rendered in
+  the UI, logs, or audit payloads.
+</p>
+
+{% if errors.get('form') %}
+<div class="panel p-4 mb-6 border-bad" style="border-width: 1px; background: rgba(248,113,113,0.08);">
+  <span class="badge badge-bad">error</span>
+  <span class="text-sm ml-2">{{ errors.form }}</span>
+</div>
+{% endif %}
+
+<form method="post" action="/targets" class="space-y-5">
+
+  <!-- name -->
+  <div class="panel p-5">
+    <label class="block text-sm font-semibold mb-2">Name (slug)</label>
+    <input type="text" name="name" value="{{ form.name or '' }}"
+      pattern="^[a-z0-9][a-z0-9-]*$"
+      placeholder="my-chat"
+      class="w-full p-3 text-sm font-mono"
+      style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);"
+      required>
+    <p class="text-xs muted mt-1">Lowercase letters, digits, and hyphens. Must start with a letter or digit.</p>
+    {% if errors.get('name') %}<p class="text-xs bad mt-1">{{ errors.name }}</p>{% endif %}
+  </div>
+
+  <!-- kind -->
+  <div class="panel p-5">
+    <label class="block text-sm font-semibold mb-2">Kind</label>
+    <div class="space-y-2">
+      <label class="flex items-center gap-2">
+        <input type="radio" name="kind" value="http_chat" {% if form.kind != 'echo' and form.kind != 'clinical_copilot' %}checked{% endif %}>
+        <span class="text-sm">http_chat <span class="muted text-xs">(generic HTTP /chat endpoint)</span></span>
+      </label>
+      <label class="flex items-center gap-2 muted" title="Configurable via the CLI only.">
+        <input type="radio" name="kind" value="echo" disabled>
+        <span class="text-sm">echo <span class="text-xs">(local in-process demo; CLI-only)</span></span>
+      </label>
+      <label class="flex items-center gap-2 muted" title="Use CLI: adversary targets add --kind clinical_copilot.">
+        <input type="radio" name="kind" value="clinical_copilot" disabled>
+        <span class="text-sm">clinical_copilot <span class="text-xs">(OpenEMR sidecar; CLI-only)</span></span>
+      </label>
+    </div>
+    {% if errors.get('kind') %}<p class="text-xs bad mt-1">{{ errors.kind }}</p>{% endif %}
+  </div>
+
+  <!-- base_url -->
+  <div class="panel p-5">
+    <label class="block text-sm font-semibold mb-2">Base URL</label>
+    <input type="text" name="base_url" value="{{ form.base_url or '' }}"
+      placeholder="http://192.168.1.50:8000"
+      class="w-full p-3 text-sm font-mono"
+      style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);"
+      required>
+    <p class="text-xs muted mt-1">RFC1918, .local, and the Hetzner demo box are allowed without confirmation. Public hostnames require the Allow-public box below.</p>
+    {% if errors.get('base_url') %}<p class="text-xs bad mt-1">{{ errors.base_url }}</p>{% endif %}
+  </div>
+
+  <!-- description -->
+  <div class="panel p-5">
+    <label class="block text-sm font-semibold mb-2">Description</label>
+    <textarea name="description" rows="2"
+      class="w-full p-3 text-sm"
+      style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">{{ form.description or '' }}</textarea>
+  </div>
+
+  <!-- reach steps -->
+  <div class="panel p-5">
+    <label class="block text-sm font-semibold mb-2">Reach steps (one per line)</label>
+    <textarea name="reach_steps_text" rows="5"
+      placeholder="Open the app at http://192.168.1.50:8000&#10;Log in as demo / demo&#10;Open the chat panel"
+      class="w-full p-3 text-sm"
+      style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">{{ form.reach_steps_text or '' }}</textarea>
+    <p class="text-xs muted mt-1">How a person reaches the chat surface on this target.</p>
+  </div>
+
+  <!-- auth kind -->
+  <div class="panel p-5">
+    <label class="block text-sm font-semibold mb-2">Auth kind</label>
+    <div class="space-y-2 mb-3">
+      <label class="flex items-center gap-2">
+        <input type="radio" name="auth_kind" value="none" {% if not form.auth_kind or form.auth_kind == 'none' %}checked{% endif %} onclick="adversary_toggle_auth('none')">
+        <span class="text-sm">none</span>
+      </label>
+      <label class="flex items-center gap-2">
+        <input type="radio" name="auth_kind" value="bearer" {% if form.auth_kind == 'bearer' %}checked{% endif %} onclick="adversary_toggle_auth('bearer')">
+        <span class="text-sm">bearer</span>
+      </label>
+      <label class="flex items-center gap-2">
+        <input type="radio" name="auth_kind" value="header" {% if form.auth_kind == 'header' %}checked{% endif %} onclick="adversary_toggle_auth('header')">
+        <span class="text-sm">header</span>
+      </label>
+      <label class="flex items-center gap-2">
+        <input type="radio" name="auth_kind" value="basic" {% if form.auth_kind == 'basic' %}checked{% endif %} onclick="adversary_toggle_auth('basic')">
+        <span class="text-sm">basic</span>
+      </label>
+    </div>
+
+    <div id="auth-bearer" class="space-y-2" style="display: {% if form.auth_kind == 'bearer' %}block{% else %}none{% endif %};">
+      <label class="block text-xs muted">Bearer token</label>
+      <input type="password" name="bearer_token" autocomplete="off"
+        class="w-full p-3 text-sm font-mono"
+        style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+      {% if errors.get('bearer_token') %}<p class="text-xs bad mt-1">{{ errors.bearer_token }}</p>{% endif %}
+    </div>
+
+    <div id="auth-header" class="space-y-2" style="display: {% if form.auth_kind == 'header' %}block{% else %}none{% endif %};">
+      <label class="block text-xs muted">Header name</label>
+      <input type="text" name="header_name" value="{{ form.header_name or '' }}"
+        class="w-full p-3 text-sm font-mono"
+        style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+      {% if errors.get('header_name') %}<p class="text-xs bad mt-1">{{ errors.header_name }}</p>{% endif %}
+      <label class="block text-xs muted">Header value</label>
+      <input type="password" name="header_value" autocomplete="off"
+        class="w-full p-3 text-sm font-mono"
+        style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+      {% if errors.get('header_value') %}<p class="text-xs bad mt-1">{{ errors.header_value }}</p>{% endif %}
+    </div>
+
+    <div id="auth-basic" class="space-y-2" style="display: {% if form.auth_kind == 'basic' %}block{% else %}none{% endif %};">
+      <label class="block text-xs muted">Username</label>
+      <input type="text" name="basic_user" value="{{ form.basic_user or '' }}"
+        class="w-full p-3 text-sm font-mono"
+        style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+      {% if errors.get('basic_user') %}<p class="text-xs bad mt-1">{{ errors.basic_user }}</p>{% endif %}
+      <label class="block text-xs muted">Password</label>
+      <input type="password" name="basic_pass" autocomplete="off"
+        class="w-full p-3 text-sm font-mono"
+        style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+      {% if errors.get('basic_pass') %}<p class="text-xs bad mt-1">{{ errors.basic_pass }}</p>{% endif %}
+    </div>
+  </div>
+
+  <!-- allow_public -->
+  <div class="panel p-5 border-warn" style="border-width: 1px;">
+    <label class="flex items-center gap-2">
+      <input type="checkbox" name="allow_public" value="true" {% if form.allow_public %}checked{% endif %}>
+      <span class="text-sm font-semibold warn">Allow public hostname</span>
+    </label>
+    <p class="text-xs muted mt-1">
+      Required for any base URL that is not RFC1918, .local, loopback, or the
+      Hetzner demo box. Check this only when you have explicit authorization
+      to attack the third-party host.
+    </p>
+  </div>
+
+  <!-- allowlist_on_create -->
+  <div class="panel p-5">
+    <label class="flex items-center gap-2">
+      <input type="checkbox" name="allowlist_on_create" value="true" {% if form.allowlist_on_create %}checked{% endif %}>
+      <span class="text-sm font-semibold">Allowlist immediately</span>
+    </label>
+    <p class="text-xs muted mt-1">
+      If checked, scans can run against this target right away. If left
+      unchecked, the target is registered but blocked until you press
+      "Allowlist this target" on the detail page.
+    </p>
+  </div>
+
+  <button type="submit" class="badge badge-info" style="cursor: pointer; padding: 8px 16px; font-size: 0.9rem;">
+    Register target
+  </button>
+</form>
+
+<script>
+function adversary_toggle_auth(kind) {
+  for (const k of ['bearer', 'header', 'basic']) {
+    const el = document.getElementById('auth-' + k);
+    if (el) el.style.display = (kind === k) ? 'block' : 'none';
+  }
+}
+</script>
+
+{% endblock %}

@@ -9,12 +9,21 @@
   {{ total }} total &middot; page {{ page }} of {{ total_pages }}.
 </p>
 
+{% if target_filter %}
+<div class="mb-4 flex items-center gap-2">
+  <span class="muted text-sm">Target filter:</span>
+  <a href="/targets/{{ target_filter }}" class="badge badge-info no-underline">{{ target_filter }}</a>
+  <a href="/attacks" class="text-xs muted">clear</a>
+</div>
+{% endif %}
+
 {% if attacks %}
 <div class="panel p-0 overflow-hidden">
   <table>
     <thead>
       <tr>
         <th>Attack ID</th>
+        <th>Target</th>
         <th>Category</th>
         <th>Subcategory</th>
         <th>Expected unsafe behavior</th>
@@ -25,6 +34,7 @@
     {% for a in attacks %}
       <tr>
         <td><a class="font-mono text-xs" href="/attacks/{{ a.attack_id }}">{{ a.attack_id }}</a></td>
+        <td>{% with target_id=a.target_id %}{% include '_target_badge.html' %}{% endwith %}</td>
         <td><a href="/glossary/{{ a.category }}" class="no-underline">{{ a.category }}</a></td>
         <td><code>{{ a.subcategory }}</code></td>
         <td class="text-sm">{{ a.expected_unsafe_behavior[:80] }}{% if a.expected_unsafe_behavior|length > 80 %}…{% endif %}</td>

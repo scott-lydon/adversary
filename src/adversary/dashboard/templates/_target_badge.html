@@ -1,0 +1,18 @@
+{# Renders a small target badge with a hover tooltip showing the base_url.
+
+Usage:
+  {% include '_target_badge.html' with context %}
+  given variables:
+    target_id (str | None)
+    targets_by_id (dict[str, dict])  -- from _common_context
+#}
+{% set t = targets_by_id.get(target_id) if target_id else None %}
+{% if t %}
+<a href="/targets/{{ t.name }}"
+   class="badge badge-info no-underline"
+   title="{{ t.kind }} — {{ t.base_url }}">
+  {{ t.name }}
+</a>
+{% else %}
+<span class="badge badge-muted" title="No registered target on file for this row.">unregistered</span>
+{% endif %}

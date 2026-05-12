@@ -8,6 +8,14 @@
   <span class="badge badge-info mb-2 inline-block">{{ info.key }}</span>
   <h1 class="text-4xl font-bold mb-3">{{ info.title }}</h1>
   <p class="text-lg muted">{{ info.elevator }}</p>
+  {% if target_record %}
+  <div class="mt-4 flex items-center gap-2 flex-wrap">
+    <span class="muted text-sm">Showing target-specific overlay for</span>
+    <a href="/targets/{{ target_record.name }}" class="badge badge-info no-underline">{{ target_record.name }}</a>
+    <span class="badge badge-muted">{{ target_record.kind }}</span>
+    <a href="/glossary/{{ info.key }}" class="text-xs muted">show generic only</a>
+  </div>
+  {% endif %}
 </header>
 
 <section class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
@@ -62,18 +70,46 @@
 
   <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
     <div class="panel p-4 border-bad" style="border-width: 1px;">
-      <div class="text-xs uppercase muted tracking-wider mb-2">Risks if exploited</div>
+      <div class="text-xs uppercase muted tracking-wider mb-2">Risks if exploited (generic)</div>
       <ul class="space-y-1 text-sm">
         {% for r in sub.risks_if_exploited %}<li>&bull; <span class="muted">{{ r }}</span></li>{% endfor %}
       </ul>
     </div>
     <div class="panel p-4 border-good" style="border-width: 1px;">
-      <div class="text-xs uppercase muted tracking-wider mb-2">How it's fixed</div>
+      <div class="text-xs uppercase muted tracking-wider mb-2">How it's fixed (generic)</div>
       <ol class="space-y-1 text-sm list-decimal list-inside">
         {% for r in sub.how_its_fixed %}<li><span class="muted">{{ r }}</span></li>{% endfor %}
       </ol>
     </div>
   </div>
+
+  {% set overlay = overlays_by_sub.get(sub.key) if overlays_by_sub else None %}
+  {% if overlay %}
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
+    {% if overlay.risks_addendum %}
+    <div class="panel p-4 border-warn" style="border-width: 1px;">
+      <div class="text-xs uppercase muted tracking-wider mb-2">Risks (target-specific addendum)</div>
+      <ul class="space-y-1 text-sm">
+        {% for r in overlay.risks_addendum %}<li>&bull; <span class="muted">{{ r }}</span></li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    {% if overlay.fixes_addendum %}
+    <div class="panel p-4 border-warn" style="border-width: 1px;">
+      <div class="text-xs uppercase muted tracking-wider mb-2">Fixes (target-specific addendum)</div>
+      <ul class="space-y-1 text-sm">
+        {% for r in overlay.fixes_addendum %}<li>&bull; <span class="muted">{{ r }}</span></li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+  {% if overlay.example_addendum %}
+  <div class="panel p-4 mt-4" style="background: var(--panel2);">
+    <div class="text-xs uppercase muted tracking-wider mb-2">Target-specific example</div>
+    <p class="text-sm muted">{{ overlay.example_addendum }}</p>
+  </div>
+  {% endif %}
+  {% endif %}
 </section>
 {% endfor %}
 

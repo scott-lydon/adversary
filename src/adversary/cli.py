@@ -36,11 +36,23 @@ from adversary.models import (
     TargetMessage,
     TargetResponse,
 )
+from adversary.models import (
+    AuthKind,
+    TargetKind,
+    TargetSubmission,
+)
 from adversary.providers import LiteLLMProvider, ProviderError, ScriptedProvider
 from adversary.providers.base import LLMProvider
 from adversary.regression import run_regression, write_junit_xml
 from adversary.storage import SqliteStore, audit_tamper, audit_verify
-from adversary.target import open_adapter
+from adversary.target import (
+    TargetNotAllowlisted,
+    assert_allowlisted,
+    open_adapter,
+    register_from_submission,
+    resolve_by_name,
+    resolve_by_url,
+)
 
 app = typer.Typer(
     help="Adversary: multi-agent adversarial AI security platform.",
@@ -50,8 +62,10 @@ app = typer.Typer(
 
 debug_app = typer.Typer(help="Per-agent debug helpers.", no_args_is_help=True)
 audit_app = typer.Typer(help="Audit-log helpers.", no_args_is_help=True)
+targets_app = typer.Typer(help="Manage registered targets.", no_args_is_help=True)
 debug_app.add_typer(audit_app, name="audit")
 app.add_typer(debug_app, name="debug")
+app.add_typer(targets_app, name="targets")
 
 console = Console()
 
@@ -76,7 +90,19 @@ def _store(reset: bool = False) -> SqliteStore:
 
 @app.command("scan")
 def scan_cmd(
-    target: str = typer.Option(..., help="Target URL: echo://demo|hardened or http(s)://..."),
+    target: str | None = typer.Option(
+        None, help="Target URL: echo://demo|hardened or http(s)://..."
+    ),
+    target_name: str | None = typer.Option(
+        None,
+        "--target-name",
+        help="Name of a registered target (see `adversary targets list`).",
+    ),
+    auto_register: bool = typer.Option(
+        False,
+        "--auto-register",
+        help="Auto-register an HTTP target by URL if not already known.",
+    ),
     budget_usd: float = typer.Option(1.00, help="Per-session dollar budget."),
     max_campaigns: int = typer.Option(3, min=1, max=50),
     provider: str = typer.Option("scripted"),
@@ -87,19 +113,53 @@ def scan_cmd(
 ) -> None:
     """Run a full multi-agent scan against a target."""
 
+    if not target and not target_name:
+        console.print(
+            "[red]must pass either --target <url> or --target-name <slug>.[/red]"
+        )
+        raise typer.Exit(code=1)
+    if target and target_name:
+        console.print(
+            "[red]pass exactly one of --target / --target-name, not both.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    store = _store(reset=False)
     try:
-        adapter = open_adapter(target, task_token=task_token, patient_id=patient_id)
+        if target_name:
+            record = resolve_by_name(store, target_name)
+        else:
+            assert target is not None
+            record = resolve_by_url(store, target, auto_register=auto_register)
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
+        store.close()
+        raise typer.Exit(code=1) from exc
+
+    try:
+        assert_allowlisted(record)
+    except TargetNotAllowlisted as exc:
+        console.print(f"[red]{exc}[/red]")
+        store.close()
+        raise typer.Exit(code=1) from exc
+
+    try:
+        adapter = open_adapter(
+            record.base_url, task_token=task_token, patient_id=patient_id
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        store.close()
         raise typer.Exit(code=1) from exc
 
     try:
         prov = _make_provider(provider)
     except ProviderError as exc:
         console.print(f"[red]{exc}[/red]")
+        store.close()
         raise typer.Exit(code=1) from exc
 
-    store = _store(reset=False)
+    store.touch_target(record.id, used_at=datetime.now(timezone.utc).isoformat())
     orch = OrchestratorAgent(
         adapter=adapter,
         provider=prov,
@@ -108,6 +168,7 @@ def scan_cmd(
         budget_usd=budget_usd,
         max_campaigns=max_campaigns,
         seed=seed,
+        target_record=record,
     )
     outcomes = asyncio.run(orch.run_scan())
 
@@ -388,6 +449,165 @@ def audit_tamper_cmd(
         store.close()
         raise typer.Exit(code=1) from exc
     console.print(f"[yellow]tampered row {row}. run `audit verify` next.[/yellow]")
+    store.close()
+
+
+# ---------- targets subcommands ----------
+
+
+@targets_app.command("list")
+def targets_list_cmd() -> None:
+    """List every registered target."""
+    store = _store(reset=False)
+    rows = store.list_targets()
+    if not rows:
+        console.print("[yellow]No targets registered.[/yellow]")
+        store.close()
+        return
+    for r in rows:
+        flag = "[green]allowlisted[/green]" if r["allowlisted"] else "[red]unconfirmed[/red]"
+        console.print(
+            f"[cyan]{r['name']}[/cyan]  kind={r['kind']}  url={r['base_url']}  "
+            f"auth={r['auth_kind']}  {flag}"
+        )
+    store.close()
+
+
+@targets_app.command("add")
+def targets_add_cmd(
+    name: str = typer.Option(..., help="Slug, e.g. 'my-chat'."),
+    kind: str = typer.Option("http_chat", help="echo|clinical_copilot|http_chat"),
+    url: str = typer.Option(..., help="Base URL: echo:// or http(s)://"),
+    bearer_token: str | None = typer.Option(None, "--bearer-token"),
+    header_name: str | None = typer.Option(None, "--header-name"),
+    header_value: str | None = typer.Option(None, "--header-value"),
+    basic_user: str | None = typer.Option(None, "--basic-user"),
+    basic_pass: str | None = typer.Option(None, "--basic-pass"),
+    description: str = typer.Option(""),
+    reach_step: list[str] = typer.Option(
+        [],
+        "--reach-step",
+        help="Repeat to add multiple steps.",
+    ),
+    allow_public: bool = typer.Option(False, "--allow-public"),
+    allowlist: bool = typer.Option(
+        False,
+        "--allowlist",
+        help="Mark this target as attackable. Required before scans run.",
+    ),
+) -> None:
+    """Register a new target."""
+    # Build auth_kind + auth_meta + auth_secret from flag combos.
+    auth_kind: AuthKind
+    auth_meta: dict[str, Any] = {}
+    auth_secret: str | None = None
+    chosen = sum(
+        1
+        for v in (bearer_token, header_name or header_value, basic_user or basic_pass)
+        if v
+    )
+    if chosen > 1:
+        console.print(
+            "[red]choose at most one of --bearer-token, --header-*, "
+            "--basic-* . Mixed auth is not supported.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    if bearer_token:
+        auth_kind = AuthKind.BEARER
+        auth_secret = bearer_token
+    elif header_name or header_value:
+        if not (header_name and header_value):
+            console.print(
+                "[red]--header-name and --header-value must be set together.[/red]"
+            )
+            raise typer.Exit(code=1)
+        auth_kind = AuthKind.HEADER
+        auth_meta = {"header_name": header_name}
+        auth_secret = header_value
+    elif basic_user or basic_pass:
+        if not (basic_user and basic_pass):
+            console.print(
+                "[red]--basic-user and --basic-pass must be set together.[/red]"
+            )
+            raise typer.Exit(code=1)
+        auth_kind = AuthKind.BASIC
+        auth_meta = {"username": basic_user}
+        auth_secret = basic_pass
+    else:
+        auth_kind = AuthKind.NONE
+
+    try:
+        kind_enum = TargetKind(kind)
+    except ValueError as exc:
+        console.print(
+            f"[red]unknown --kind {kind!r}. valid: "
+            f"{', '.join(k.value for k in TargetKind)}[/red]"
+        )
+        raise typer.Exit(code=1) from exc
+
+    try:
+        submission = TargetSubmission(
+            name=name,
+            kind=kind_enum,
+            base_url=url,
+            description=description,
+            reach_steps=list(reach_step),
+            auth_kind=auth_kind,
+            auth_meta=auth_meta,
+            auth_secret=auth_secret,
+            allow_public=allow_public,
+            allowlist_on_create=allowlist,
+        )
+    except Exception as exc:  # pydantic ValidationError
+        console.print(f"[red]invalid target submission: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    store = _store(reset=False)
+    try:
+        record = register_from_submission(store, submission)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        store.close()
+        raise typer.Exit(code=1) from exc
+    flag = "allowlisted" if record.allowlisted else "unconfirmed (run `adversary targets allow`)"
+    console.print(
+        f"[green]registered {record.name} kind={record.kind.value} "
+        f"url={record.base_url} {flag}[/green]"
+    )
+    store.close()
+
+
+@targets_app.command("allow")
+def targets_allow_cmd(name: str = typer.Argument(...)) -> None:
+    """Mark a registered target as allowlisted."""
+    store = _store(reset=False)
+    row = store.get_target(name)
+    if row is None:
+        console.print(f"[red]no target named {name!r}.[/red]")
+        store.close()
+        raise typer.Exit(code=1)
+    store.set_allowlisted(row["id"], True)
+    console.print(f"[green]{name} allowlisted[/green]")
+    store.close()
+
+
+@targets_app.command("remove")
+def targets_remove_cmd(name: str = typer.Argument(...)) -> None:
+    """Remove a registered target if it has no references."""
+    store = _store(reset=False)
+    row = store.get_target(name)
+    if row is None:
+        console.print(f"[red]no target named {name!r}.[/red]")
+        store.close()
+        raise typer.Exit(code=1)
+    try:
+        store.delete_target(row["id"])
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        store.close()
+        raise typer.Exit(code=1) from exc
+    console.print(f"[green]removed {name}[/green]")
     store.close()
 
 

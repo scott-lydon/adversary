@@ -72,12 +72,25 @@
 <nav class="sticky top-0 z-50 backdrop-blur-md" style="background: rgba(10, 14, 26, 0.85); border-bottom: 1px solid var(--border);">
   <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
     <a href="/" class="flex items-center gap-3 no-underline">
-      <div class="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white" style="background: linear-gradient(135deg, #6366f1 0%, #34d399 100%);">A</div>
+      <div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background: linear-gradient(135deg, #6366f1 0%, #34d399 100%);">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-label="fencer" style="height: 24px; width: 24px;">
+          <ellipse cx="20" cy="18" rx="6" ry="5.5" fill="#0a0e1a"/>
+          <line x1="14.5" y1="18" x2="25.5" y2="18" stroke="#e2e8f0" stroke-width="1.4"/>
+          <path d="M20 23 Q19 31 24 38" stroke="#0a0e1a" stroke-width="4" stroke-linecap="round" fill="none"/>
+          <line x1="24" y1="38" x2="14" y2="56" stroke="#0a0e1a" stroke-width="3.5" stroke-linecap="round"/>
+          <line x1="24" y1="38" x2="44" y2="54" stroke="#0a0e1a" stroke-width="3.5" stroke-linecap="round"/>
+          <line x1="24" y1="27" x2="60" y2="22" stroke="#0a0e1a" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="20" y1="27" x2="26" y2="26" stroke="#0a0e1a" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="27" cy="26" r="2.2" fill="#0a0e1a"/>
+          <path d="M20 25 Q12 22 10 14" stroke="#0a0e1a" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+        </svg>
+      </div>
       <span class="font-bold text-lg" style="color: var(--text);">Adversary</span>
       <span class="badge badge-good">live</span>
     </a>
     <div class="hidden md:flex gap-6 text-sm items-center">
       <a href="/" class="nav-link">Summary</a>
+      <a href="/targets" class="nav-link">Targets</a>
       <a href="/findings" class="nav-link">Findings</a>
       <a href="/coverage" class="nav-link">Coverage</a>
       <a href="/glossary" class="nav-link">Glossary</a>

@@ -18,7 +18,8 @@
     Discovered {{ finding.created_at }} &middot;
     <a href="/glossary/{{ finding.category }}" class="no-underline">{{ finding.category }}</a> /
     <a href="/glossary/{{ finding.category }}#{{ finding.subcategory }}" class="no-underline">{{ finding.subcategory }}</a>
-    &middot; target <code>{{ finding.target_version_when_discovered or 'unknown' }}</code>
+    &middot; against
+    {% with target_id=finding.target_id %}{% include '_target_badge.html' %}{% endwith %}
   </p>
 </header>
 
@@ -29,7 +30,7 @@
   <p class="text-sm leading-relaxed mb-4">{{ subcategory_info.what_it_means }}</p>
   <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
     <div class="panel p-4 border-bad" style="border-width: 1px;">
-      <div class="text-xs uppercase muted tracking-wider mb-2">Why it matters</div>
+      <div class="text-xs uppercase muted tracking-wider mb-2">Why it matters (generic)</div>
       <ul class="space-y-1 text-sm">
         {% for r in subcategory_info.risks_if_exploited %}<li>&bull; <span class="muted">{{ r }}</span></li>{% endfor %}
       </ul>
@@ -39,6 +40,25 @@
       <p class="text-sm muted">{{ subcategory_info.what_it_entails }}</p>
     </div>
   </div>
+
+  {% if target_overlay %}
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
+    {% if target_overlay.risks_addendum %}
+    <div class="panel p-4 border-warn" style="border-width: 1px;">
+      <div class="text-xs uppercase muted tracking-wider mb-2">Target-specific risks ({{ target_record.kind if target_record else 'this target' }})</div>
+      <ul class="space-y-1 text-sm">
+        {% for r in target_overlay.risks_addendum %}<li>&bull; <span class="muted">{{ r }}</span></li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    {% if target_overlay.example_addendum %}
+    <div class="panel p-4" style="background: var(--panel2);">
+      <div class="text-xs uppercase muted tracking-wider mb-2">Target-specific example</div>
+      <p class="text-sm muted">{{ target_overlay.example_addendum }}</p>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
   {% elif category_info %}
   <p class="text-sm muted">{{ category_info.long_description }}</p>
   <a href="/glossary/{{ finding.category }}" class="text-sm">Read the full encyclopedia entry &rarr;</a>
@@ -115,6 +135,35 @@
       &middot; injected into field <code>message</code> of the JSON body
       {% endif %}
     </p>
+
+    {% if target_record %}
+    <div class="panel p-4 mb-4" style="background: var(--panel2);">
+      <div class="flex items-center gap-2 mb-2 flex-wrap">
+        <span class="text-xs uppercase muted tracking-wider">Target identity</span>
+        <a href="/targets/{{ target_record.name }}" class="badge badge-info no-underline">{{ target_record.name }}</a>
+        <span class="badge badge-muted">{{ target_record.kind }}</span>
+        {% if target_record.allowlisted %}
+          <span class="badge badge-good">allowlisted</span>
+        {% else %}
+          <span class="badge badge-warn">unconfirmed</span>
+        {% endif %}
+      </div>
+      <p class="text-xs muted font-mono break-all mb-2">{{ target_record.base_url }}</p>
+      {% if target_record.description %}
+      <p class="text-sm">{{ target_record.description }}</p>
+      {% endif %}
+      {% if target_record.reach_steps %}
+      <div class="mt-3">
+        <div class="text-xs uppercase muted tracking-wider mb-1">Steps to reach this feature</div>
+        <ol class="text-sm space-y-1 list-decimal list-inside">
+          {% for step in target_record.reach_steps %}
+          <li><span class="muted">{{ step }}</span></li>
+          {% endfor %}
+        </ol>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
       <div>
@@ -262,6 +311,24 @@
     </div>
     {% endfor %}
   </div>
+  {% if target_overlay and target_overlay.fixes_addendum %}
+  <h3 class="text-lg font-semibold mt-6 mb-3">
+    Target-specific fixes
+    {% if target_record %}
+      <span class="badge badge-info">{{ target_record.name }}</span>
+    {% endif %}
+  </h3>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    {% for fix in target_overlay.fixes_addendum %}
+    <div class="panel p-4 border-warn" style="border-width: 1px;">
+      <div class="flex items-start gap-3">
+        <span class="badge badge-warn">+{{ loop.index }}</span>
+        <span class="text-sm muted">{{ fix }}</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 </section>
 {% endif %}
 

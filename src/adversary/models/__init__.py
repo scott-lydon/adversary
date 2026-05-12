@@ -13,6 +13,13 @@ from adversary.models.target import (
     TargetResponse,
     TargetSession,
 )
+from adversary.models.target_record import (
+    AuthKind,
+    TargetKind,
+    TargetRecord,
+    TargetSubmission,
+    is_private_hostname,
+)
 from adversary.models.verdict import (
     JudgeRequest,
     Verdict,
@@ -22,12 +29,17 @@ from adversary.models.verdict import (
 __all__ = [
     "Attack",
     "AttackCategory",
+    "AuthKind",
     "CampaignBrief",
     "GenerationMetadata",
     "JudgeRequest",
+    "TargetKind",
     "TargetMessage",
+    "TargetRecord",
     "TargetResponse",
     "TargetSession",
+    "TargetSubmission",
     "Verdict",
     "VerdictLabel",
+    "is_private_hostname",
 ]
