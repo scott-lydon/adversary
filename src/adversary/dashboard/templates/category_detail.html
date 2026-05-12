@@ -1,0 +1,80 @@
+{% extends "_base.html" %}
+{% block title %}— {{ info.title }}{% endblock %}
+{% block content %}
+
+<a href="/glossary" class="text-sm muted">&larr; glossary</a>
+
+<header class="panel p-8 my-6">
+  <span class="badge badge-info mb-2 inline-block">{{ info.key }}</span>
+  <h1 class="text-4xl font-bold mb-3">{{ info.title }}</h1>
+  <p class="text-lg muted">{{ info.elevator }}</p>
+</header>
+
+<section class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
+  <div class="panel p-5 md:col-span-2">
+    <h2 class="text-lg font-semibold mb-2">What this category is</h2>
+    <p class="text-sm leading-relaxed muted">{{ info.long_description }}</p>
+  </div>
+  <div class="panel p-5">
+    <h2 class="text-lg font-semibold mb-2">Real-world analogy</h2>
+    <p class="text-sm leading-relaxed muted">{{ info.real_world_analogy }}</p>
+  </div>
+</section>
+
+{% if coverage %}
+<section class="panel p-5 mb-10">
+  <h2 class="text-lg font-semibold mb-3">Live coverage for this category</h2>
+  <table>
+    <thead><tr><th>Subcategory</th><th>Runs</th><th>Success</th><th>Partial</th><th>Fail</th></tr></thead>
+    <tbody>
+      {% for c in coverage %}
+      <tr>
+        <td><code>{{ c.subcategory }}</code></td>
+        <td>{{ c.runs }}</td>
+        <td class="bad">{{ c.successes }}</td>
+        <td class="warn">{{ c.partials }}</td>
+        <td class="good">{{ c.fails }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<h2 class="text-2xl font-bold mb-4">Subcategories</h2>
+{% for sub in info.subcategories %}
+<section id="{{ sub.key }}" class="panel p-6 mb-6 section-anchor">
+  <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+    <h3 class="text-xl font-semibold">{{ sub.title }}</h3>
+    <code class="text-xs">{{ sub.key }}</code>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+    <div>
+      <div class="text-xs uppercase muted tracking-wider mb-1">What it means</div>
+      <p class="text-sm leading-relaxed">{{ sub.what_it_means }}</p>
+    </div>
+    <div>
+      <div class="text-xs uppercase muted tracking-wider mb-1">What it entails</div>
+      <p class="text-sm leading-relaxed">{{ sub.what_it_entails }}</p>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
+    <div class="panel p-4 border-bad" style="border-width: 1px;">
+      <div class="text-xs uppercase muted tracking-wider mb-2">Risks if exploited</div>
+      <ul class="space-y-1 text-sm">
+        {% for r in sub.risks_if_exploited %}<li>&bull; <span class="muted">{{ r }}</span></li>{% endfor %}
+      </ul>
+    </div>
+    <div class="panel p-4 border-good" style="border-width: 1px;">
+      <div class="text-xs uppercase muted tracking-wider mb-2">How it's fixed</div>
+      <ol class="space-y-1 text-sm list-decimal list-inside">
+        {% for r in sub.how_its_fixed %}<li><span class="muted">{{ r }}</span></li>{% endfor %}
+      </ol>
+    </div>
+  </div>
+</section>
+{% endfor %}
+
+{% endblock %}

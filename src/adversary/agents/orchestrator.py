@@ -246,6 +246,39 @@ class OrchestratorAgent:
             )
             responses_q.append((attack, response))
             self.store.insert_attack(attack.model_dump(), _utcnow())
+            # Persist the full request + response transcript so the
+            # /findings/{id} chain page can render what was actually sent
+            # and what came back, not just hashes. trace_id == attack_id
+            # is the join key the dashboard uses.
+            self.store.insert_agent_message(
+                {
+                    "from_agent": "target_adapter",
+                    "to_agent": "judge",
+                    "schema_name": "TargetExchange/v1",
+                    "trace_id": attack.attack_id,
+                    "created_at": _utcnow(),
+                    "payload": {
+                        "campaign_id": campaign_id,
+                        "attack_id": attack.attack_id,
+                        "target_url": self.adapter.url,
+                        "request": {
+                            "session_id": session.session_id,
+                            "user_id": session.user_id,
+                            "patient_id": session.patient_id,
+                            "messages": [
+                                msg.model_dump() for msg in attack.prompt_sequence
+                            ],
+                        },
+                        "response": {
+                            "text": response.text,
+                            "tool_calls": response.tool_calls,
+                            "sources": response.sources,
+                            "latency_ms": response.latency_ms,
+                            "token_count": response.token_count,
+                        },
+                    },
+                }
+            )
             self.store.append_audit(
                 agent="target_adapter",
                 action="response",

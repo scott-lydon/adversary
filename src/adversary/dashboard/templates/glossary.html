@@ -1,0 +1,26 @@
+{% extends "_base.html" %}
+{% block title %}— Glossary{% endblock %}
+{% block content %}
+
+<h1 class="text-3xl font-bold mb-2">Glossary</h1>
+<p class="muted text-sm mb-6">
+  Plain-English encyclopedia of every attack category Adversary tests.
+  Click into a card for what it means, what it entails, the risks if
+  exploited, and how it's fixed.
+</p>
+
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+  {% for item in items %}
+  <a href="/glossary/{{ item.key }}" class="panel panel-hover p-5 block no-underline" style="color: var(--text);">
+    <div class="flex items-center justify-between mb-2">
+      <span class="badge {% if item.has_entry %}badge-info{% else %}badge-muted{% endif %}">{{ item.subcount }} subcategor{% if item.subcount == 1 %}y{% else %}ies{% endif %}</span>
+      {% if not item.has_entry %}<span class="text-xs muted">stub</span>{% endif %}
+    </div>
+    <h2 class="text-lg font-semibold mb-2">{{ item.title }}</h2>
+    <p class="text-sm muted">{{ item.elevator }}</p>
+    <div class="text-xs accent-text mt-3">Learn more &rarr;</div>
+  </a>
+  {% endfor %}
+</div>
+
+{% endblock %}

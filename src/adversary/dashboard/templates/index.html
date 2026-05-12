@@ -1,50 +1,121 @@
 {% extends "_base.html" %}
-{% block title %}Summary{% endblock %}
+{% block title %}— Summary{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold">Summary</h1>
-<section class="grid grid-cols-2 md:grid-cols-4 gap-4">
-  <div class="panel">
-    <div class="text-slate-400 text-xs uppercase">Campaigns</div>
-    <div class="text-3xl font-bold">{{ summary.campaigns }}</div>
-  </div>
-  <div class="panel">
-    <div class="text-slate-400 text-xs uppercase">Attacks</div>
-    <div class="text-3xl font-bold">{{ summary.attacks }}</div>
-  </div>
-  <div class="panel">
-    <div class="text-slate-400 text-xs uppercase">Confirmed Exploits</div>
-    <div class="text-3xl font-bold">{{ summary.verdicts.success or 0 }}</div>
-  </div>
-  <div class="panel">
-    <div class="text-slate-400 text-xs uppercase">Total Cost</div>
-    <div class="text-3xl font-bold">${{ "%.4f"|format(summary.total_dollar_cost) }}</div>
+
+<!-- Hero -->
+<section class="grid-pattern -mx-6 px-6 py-12 mb-10 rounded-xl" style="background: linear-gradient(180deg, rgba(99,102,241,0.05), transparent);">
+  <div class="max-w-5xl">
+    <span class="badge badge-info mb-3 inline-block">Live dashboard</span>
+    <h1 class="text-5xl font-bold mb-3 leading-tight">
+      <span class="gradient-text">Adversary</span>
+    </h1>
+    <p class="text-lg muted leading-relaxed">
+      Multi-agent adversarial AI security platform. Every confirmed exploit becomes a regression test. Click any card to drill into the underlying rows.
+    </p>
   </div>
 </section>
 
-<section class="grid grid-cols-2 gap-4">
-  <div class="panel">
-    <div class="text-slate-400 text-xs uppercase">Verdict mix</div>
-    <div class="mt-2 space-y-1">
-      <div>success: {{ summary.verdicts.success or 0 }}</div>
-      <div>partial: {{ summary.verdicts.partial or 0 }}</div>
-      <div>fail: {{ summary.verdicts.fail or 0 }}</div>
+<!-- Six clickable summary cards -->
+<section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mb-10">
+  <a href="/campaigns" class="panel panel-hover p-5 block no-underline" style="color: var(--text);">
+    <div class="text-xs uppercase muted tracking-wider">Campaigns</div>
+    <div class="text-3xl font-bold accent-text mt-1">{{ summary.campaigns }}</div>
+    <div class="text-sm muted mt-2">Orchestrator runs that picked a category and drove the loop end-to-end.</div>
+  </a>
+  <a href="/attacks" class="panel panel-hover p-5 block no-underline" style="color: var(--text);">
+    <div class="text-xs uppercase muted tracking-wider">Attacks</div>
+    <div class="text-3xl font-bold accent-text mt-1">{{ summary.attacks }}</div>
+    <div class="text-sm muted mt-2">Individual probes the Red Team generated and sent to the target.</div>
+  </a>
+  <a href="/findings" class="panel panel-hover p-5 block no-underline" style="color: var(--text);">
+    <div class="text-xs uppercase muted tracking-wider">Confirmed Exploits</div>
+    <div class="text-3xl font-bold bad mt-1">{{ summary.verdicts.success or 0 }}</div>
+    <div class="text-sm muted mt-2">Attacks where the Judge agreed the target failed. Each one is a regression test.</div>
+  </a>
+  <a href="/cost" class="panel panel-hover p-5 block no-underline" style="color: var(--text);">
+    <div class="text-xs uppercase muted tracking-wider">Total Cost</div>
+    <div class="text-3xl font-bold accent-text mt-1">${{ "%.4f"|format(summary.total_dollar_cost) }}</div>
+    <div class="text-sm muted mt-2">Dollars billed across all four agents on this database.</div>
+  </a>
+  <a href="/verdicts" class="panel panel-hover p-5 block no-underline" style="color: var(--text);">
+    <div class="text-xs uppercase muted tracking-wider">Verdict Mix</div>
+    <div class="mt-2 space-y-1.5 text-sm">
+      {% set tot = (summary.verdicts.success or 0) + (summary.verdicts.partial or 0) + (summary.verdicts.fail or 0) %}
+      {% set tot = tot if tot > 0 else 1 %}
+      <div class="flex items-center justify-between">
+        <span class="bad">success</span>
+        <span class="muted">{{ summary.verdicts.success or 0 }}</span>
+      </div>
+      <div class="h-1.5 rounded" style="background: var(--panel2);">
+        <div class="h-1.5 rounded" style="width: {{ ((summary.verdicts.success or 0) / tot * 100) | int }}%; background: var(--bad);"></div>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="warn">partial</span>
+        <span class="muted">{{ summary.verdicts.partial or 0 }}</span>
+      </div>
+      <div class="h-1.5 rounded" style="background: var(--panel2);">
+        <div class="h-1.5 rounded" style="width: {{ ((summary.verdicts.partial or 0) / tot * 100) | int }}%; background: var(--warn);"></div>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="good">fail</span>
+        <span class="muted">{{ summary.verdicts.fail or 0 }}</span>
+      </div>
+      <div class="h-1.5 rounded" style="background: var(--panel2);">
+        <div class="h-1.5 rounded" style="width: {{ ((summary.verdicts.fail or 0) / tot * 100) | int }}%; background: var(--good);"></div>
+      </div>
     </div>
-  </div>
-  <div class="panel">
-    <div class="text-slate-400 text-xs uppercase">Findings by severity</div>
-    <div class="mt-2 space-y-1">
-      {% for severity, count in summary.findings_by_severity.items() %}
-        <div>{{ severity }}: {{ count }}</div>
-      {% else %}
-        <div class="text-slate-400">no findings yet</div>
-      {% endfor %}
-    </div>
-  </div>
+  </a>
+  <a href="/audit" class="panel panel-hover p-5 block no-underline" style="color: var(--text);">
+    <div class="text-xs uppercase muted tracking-wider">Audit Chain Head</div>
+    <div class="font-mono text-sm accent-text mt-2 break-all">{{ summary.audit_head_hash[:24] }}…</div>
+    <div class="text-sm muted mt-2">Rows: {{ summary.audit_rows }}. Every cross-agent message is hash-chained.</div>
+  </a>
 </section>
 
-<section class="panel">
-  <div class="text-slate-400 text-xs uppercase">Audit chain head</div>
-  <div class="font-mono text-xs break-all">{{ summary.audit_head_hash }}</div>
-  <div class="text-slate-400 text-xs">rows: {{ summary.audit_rows }}</div>
+<!-- Findings by Severity -->
+<section class="panel p-6 mb-10">
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="text-xl font-semibold">Findings by Severity</h2>
+    <a href="/findings" class="text-sm">view all</a>
+  </div>
+  {% if summary.findings_by_severity %}
+  <div class="flex flex-wrap gap-3">
+    {% for severity, count in summary.findings_by_severity.items() %}
+      {% if severity == 'Critical' %}{% set cls = 'badge-bad' %}
+      {% elif severity == 'High' %}{% set cls = 'badge-bad' %}
+      {% elif severity == 'Medium' %}{% set cls = 'badge-warn' %}
+      {% else %}{% set cls = 'badge-muted' %}{% endif %}
+      <a href="/findings?severity={{ severity }}" class="panel panel-hover p-3 no-underline flex items-center gap-3" style="color: var(--text);">
+        <span class="badge {{ cls }}">{{ severity }}</span>
+        <span class="font-bold text-lg">{{ count }}</span>
+      </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="muted">No findings yet. Run a scan first.</div>
+  {% endif %}
 </section>
+
+<!-- Recent audit activity -->
+<section class="panel p-6">
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="text-xl font-semibold">Recent activity</h2>
+    <a href="/audit" class="text-sm">full audit chain</a>
+  </div>
+  {% if recent_audit %}
+  <ul class="space-y-2 text-sm">
+    {% for r in recent_audit %}
+    <li class="flex items-center gap-3">
+      <span class="font-mono muted text-xs">#{{ r.rowid_seq }}</span>
+      <span class="muted text-xs">{{ r.occurred_at }}</span>
+      <span class="agent-badge agent-{{ r.agent }}">{{ r.agent }}</span>
+      <span>{{ r.action }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="muted">No audit rows yet.</div>
+  {% endif %}
+</section>
+
 {% endblock %}

@@ -1,0 +1,94 @@
+{% extends "_base.html" %}
+{% block title %}— Attack {{ attack.attack_id }}{% endblock %}
+{% block content %}
+
+<a href="/attacks" class="text-sm muted">&larr; all attacks</a>
+
+<header class="panel p-6 my-6">
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <h1 class="text-2xl font-bold font-mono break-all">{{ attack.attack_id }}</h1>
+    <div class="flex gap-2">
+      <a href="/glossary/{{ attack.category }}" class="badge badge-info no-underline">{{ attack.category }}</a>
+      <span class="badge badge-muted">{{ attack.subcategory }}</span>
+    </div>
+  </div>
+  <p class="muted text-sm mt-3">
+    Generated {{ attack.created_at }} &middot;
+    campaign <a href="/campaigns/{{ campaign_id }}" class="font-mono">{{ campaign_id }}</a>
+  </p>
+  <div class="mt-4 panel p-3" style="background: var(--panel2);">
+    <div class="text-xs uppercase muted tracking-wider">Expected unsafe behavior</div>
+    <div class="text-sm mt-1">{{ attack.expected_unsafe_behavior }}</div>
+  </div>
+</header>
+
+<h2 class="text-xl font-semibold mb-3">Prompt sequence</h2>
+<div class="space-y-3 mb-8">
+  {% for msg in attack.prompt_sequence %}
+  <div class="role-bubble role-{{ msg.role }}">
+    <div class="flex items-center justify-between mb-2">
+      <span class="badge {% if msg.role == 'user' %}badge-info{% elif msg.role == 'system' %}badge-warn{% else %}badge-good{% endif %}">{{ msg.role }}</span>
+      {% if msg.metadata %}
+      <span class="text-xs muted">{{ msg.metadata|length }} metadata key(s)</span>
+      {% endif %}
+    </div>
+    <div class="whitespace-pre-wrap text-sm">{{ msg.text }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+  <div class="panel p-5">
+    <h3 class="text-lg font-semibold mb-3">Generation metadata</h3>
+    <table>
+      <tbody>
+        {% for k, v in attack.generation_metadata.items() %}
+        <tr><td class="muted">{{ k }}</td><td><code>{{ v }}</code></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel p-5">
+    <h3 class="text-lg font-semibold mb-3">Mutation lineage</h3>
+    {% if attack.mutation_lineage %}
+    <ol class="space-y-2">
+      {% for parent in attack.mutation_lineage %}
+      <li><a class="font-mono text-xs" href="/attacks/{{ parent }}">{{ parent }}</a></li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <div class="muted text-sm">No mutation parents recorded.</div>
+    {% endif %}
+  </div>
+</div>
+
+<h2 class="text-xl font-semibold mb-3">Verdicts ({{ verdicts|length }})</h2>
+{% if verdicts %}
+<div class="space-y-3">
+  {% for v in verdicts %}
+    {% if v.verdict == 'success' %}{% set vcls = 'badge-bad' %}
+    {% elif v.verdict == 'partial' %}{% set vcls = 'badge-warn' %}
+    {% else %}{% set vcls = 'badge-good' %}{% endif %}
+    <div class="panel p-4">
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <div class="flex items-center gap-2">
+          <span class="badge {{ vcls }}">{{ v.verdict }}</span>
+          <span class="muted text-xs">conf {{ "%.2f"|format(v.confidence) }}</span>
+          <span class="muted text-xs">rubric {{ v.rubric_version }}</span>
+        </div>
+        <span class="muted text-xs">{{ v.created_at }}</span>
+      </div>
+      {% if v.evidence %}
+      <ul class="mt-2 space-y-1 text-sm">
+        {% for e in v.evidence %}<li class="muted">&bull; {{ e }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% if v.notes %}<div class="text-xs muted mt-2">notes: {{ v.notes }}</div>{% endif %}
+    </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel p-6 muted">No verdicts recorded for this attack.</div>
+{% endif %}
+
+{% endblock %}

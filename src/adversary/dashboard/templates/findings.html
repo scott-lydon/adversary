@@ -1,35 +1,55 @@
 {% extends "_base.html" %}
-{% block title %}Findings{% endblock %}
+{% block title %}— Findings{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold">Findings</h1>
-{% if findings %}
-<table class="w-full panel text-sm">
-  <thead class="text-slate-400 text-left">
-    <tr>
-      <th>ID</th>
-      <th>Severity</th>
-      <th>Category</th>
-      <th>Status</th>
-      <th>Created</th>
-      <th>Report</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for f in findings %}
-    <tr class="border-t border-slate-700">
-      <td>{{ f.id }}</td>
-      <td>
-        <span class="badge {% if f.severity == 'Critical' %}bg-red-700{% elif f.severity == 'High' %}bg-orange-600{% elif f.severity == 'Medium' %}bg-yellow-600{% else %}bg-slate-600{% endif %}">{{ f.severity }}</span>
-      </td>
-      <td>{{ f.category }}.{{ f.subcategory }}</td>
-      <td>{{ f.status }}</td>
-      <td>{{ f.created_at }}</td>
-      <td><a href="/findings/{{ f.id }}">view</a></td>
-    </tr>
+
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-3xl font-bold">Findings</h1>
+    <p class="muted text-sm mt-1">
+      Confirmed exploits. Each row points at the originating attack, the
+      Judge's verdict, and the written report.
+      {% if severity_filter %}
+        Filtering by severity = <span class="badge badge-info">{{ severity_filter }}</span>
+        <a href="/findings" class="ml-2 text-sm">clear filter</a>
+      {% endif %}
+    </p>
+  </div>
+  <div class="flex gap-2">
+    {% for s in ['Critical', 'High', 'Medium', 'Low'] %}
+      <a href="/findings?severity={{ s }}" class="badge {% if s == 'Critical' or s == 'High' %}badge-bad{% elif s == 'Medium' %}badge-warn{% else %}badge-muted{% endif %}">{{ s }}</a>
     {% endfor %}
-  </tbody>
-</table>
+  </div>
+</div>
+
+{% if findings %}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+  {% for f in findings %}
+  {% if f.severity == 'Critical' or f.severity == 'High' %}{% set cls = 'badge-bad' %}
+  {% elif f.severity == 'Medium' %}{% set cls = 'badge-warn' %}
+  {% else %}{% set cls = 'badge-muted' %}{% endif %}
+  <div class="panel panel-hover p-5">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-2">
+        <span class="badge {{ cls }}">{{ f.severity }}</span>
+        <span class="badge badge-muted">{{ f.status }}</span>
+      </div>
+      <span class="text-xs muted font-mono">{{ f.id }}</span>
+    </div>
+    <h3 class="text-lg font-semibold mb-1">
+      <a href="/glossary/{{ f.category }}" class="no-underline">{{ f.category }}</a>
+      <span class="muted">/</span>
+      <a href="/glossary/{{ f.category }}#{{ f.subcategory }}" class="no-underline">{{ f.subcategory }}</a>
+    </h3>
+    <p class="text-xs muted mb-4">{{ f.created_at }} &middot; target: <code>{{ f.target_version_when_discovered or 'unknown' }}</code></p>
+    <div class="flex gap-2">
+      <a href="/findings/{{ f.id }}" class="badge badge-info">View chain</a>
+      <a href="/findings/{{ f.id }}/raw" class="badge badge-muted">Raw markdown</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
 {% else %}
-<div class="panel text-slate-400">no findings yet. run a scan first.</div>
+<div class="panel p-6 muted">No findings yet. Run a scan first.</div>
 {% endif %}
+
 {% endblock %}

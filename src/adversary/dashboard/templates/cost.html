@@ -1,0 +1,87 @@
+{% extends "_base.html" %}
+{% block title %}— Cost{% endblock %}
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+{% block content %}
+
+<h1 class="text-3xl font-bold mb-2">Cost by agent</h1>
+<p class="muted text-sm mb-6">
+  Dollars spent across all runs in this database. Red Team and Judge
+  costs are pulled from per-attack and per-verdict metadata; other
+  agents' costs come from <code>agent_runs.dollar_cost</code>.
+  Total: <strong class="accent-text">${{ "%.4f"|format(total_cost) }}</strong>.
+</p>
+
+<div class="panel p-5 mb-6" style="height: 320px;">
+  <canvas id="costChart"></canvas>
+</div>
+
+{% if rows %}
+<div class="panel p-0 overflow-hidden mb-8">
+  <table>
+    <thead>
+      <tr>
+        <th>Agent</th>
+        <th class="text-right">Cost</th>
+        <th class="text-right">Tokens in</th>
+        <th class="text-right">Tokens out</th>
+        <th class="text-right">Runs</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><span class="agent-badge agent-{{ r.agent }}">{{ r.agent }}</span></td>
+        <td class="text-right">${{ "%.6f"|format(r.dollar_cost or 0.0) }}</td>
+        <td class="text-right">{{ r.tokens_in or 0 }}</td>
+        <td class="text-right">{{ r.tokens_out or 0 }}</td>
+        <td class="text-right">{{ r.runs or 0 }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="panel p-6 muted">No agent runs recorded yet.</div>
+{% endif %}
+
+<script>
+(function(){
+  var ctx = document.getElementById('costChart').getContext('2d');
+  var agents = {{ agents_json | safe }};
+  var costs = {{ costs_json | safe }};
+  var colors = agents.map(function(a){
+    if (a === 'orchestrator') return '#a78bfa';
+    if (a === 'red_team') return '#f87171';
+    if (a === 'judge') return '#c084fc';
+    if (a === 'documentation') return '#34d399';
+    if (a === 'target_adapter') return '#60a5fa';
+    return '#6366f1';
+  });
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: agents,
+      datasets: [{
+        label: 'Dollar cost',
+        data: costs,
+        backgroundColor: colors,
+        borderColor: colors,
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { color: '#94a3b8' }, grid: { color: '#2d3a55' } },
+        x: { ticks: { color: '#94a3b8' }, grid: { color: '#2d3a55' } }
+      }
+    }
+  });
+})();
+</script>
+
+{% endblock %}

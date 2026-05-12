@@ -1,0 +1,45 @@
+{% extends "_base.html" %}
+{% block title %}— Campaign {{ campaign_id }}{% endblock %}
+{% block content %}
+
+<a href="/campaigns" class="text-sm muted">&larr; all campaigns</a>
+
+<header class="panel p-6 my-6">
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <h1 class="text-2xl font-bold font-mono">{{ campaign_id }}</h1>
+    {% if category_key %}
+    <a href="/glossary/{{ category_key }}" class="badge badge-info no-underline">{{ category_key }} / {{ subcategory_key }}</a>
+    {% endif %}
+  </div>
+  {% if run %}
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5 text-sm">
+    <div><div class="muted text-xs uppercase tracking-wider">Model</div><div class="mt-1">{{ run.model }}</div></div>
+    <div><div class="muted text-xs uppercase tracking-wider">Started</div><div class="mt-1">{{ run.created_at }}</div></div>
+    <div><div class="muted text-xs uppercase tracking-wider">Latency</div><div class="mt-1">{{ run.latency_ms }} ms</div></div>
+    <div><div class="muted text-xs uppercase tracking-wider">Cost</div><div class="mt-1">${{ "%.4f"|format(run.dollar_cost or 0.0) }}</div></div>
+  </div>
+  {% endif %}
+</header>
+
+<h2 class="text-xl font-semibold mb-3">Audit timeline</h2>
+{% if audit_rows %}
+<ol class="space-y-3">
+  {% for r in audit_rows %}
+  <li class="panel p-4 flex items-start gap-3">
+    <span class="font-mono muted text-xs whitespace-nowrap">#{{ r.rowid_seq }}</span>
+    <span class="agent-badge agent-{{ r.agent }}">{{ r.agent }}</span>
+    <div class="flex-1">
+      <div class="text-sm">{{ r.narrative }}</div>
+      <div class="text-xs muted mt-1">{{ r.occurred_at }} &middot; <code>{{ r.action }}</code></div>
+      {% if r.payload and r.payload.attack_id %}
+      <a class="text-xs" href="/attacks/{{ r.payload.attack_id }}">view attack {{ r.payload.attack_id }}</a>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<div class="panel p-6 muted">No audit rows match this campaign.</div>
+{% endif %}
+
+{% endblock %}

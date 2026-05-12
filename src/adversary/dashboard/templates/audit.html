@@ -1,26 +1,44 @@
 {% extends "_base.html" %}
-{% block title %}Audit{% endblock %}
+{% block title %}— Audit{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold">Audit log (latest 100)</h1>
+
+<h1 class="text-3xl font-bold mb-2">Audit log</h1>
+<p class="muted text-sm mb-6">
+  Hash-chained record of every cross-agent message. Each row's
+  <code>this_hash</code> is the SHA-256 of (prev_hash + occurred_at + agent
+  + action + payload). Tampering with any row breaks every hash that
+  follows.
+</p>
+
 {% if rows %}
-<table class="w-full panel text-xs">
-  <thead class="text-slate-400 text-left">
-    <tr><th>#</th><th>occurred_at</th><th>agent</th><th>action</th><th>prev_hash</th><th>this_hash</th></tr>
-  </thead>
-  <tbody>
-  {% for r in rows %}
-    <tr class="border-t border-slate-700">
-      <td>{{ r.rowid_seq }}</td>
-      <td>{{ r.occurred_at }}</td>
-      <td>{{ r.agent }}</td>
-      <td>{{ r.action }}</td>
-      <td class="font-mono">{{ r.prev_hash[:16] }}…</td>
-      <td class="font-mono">{{ r.this_hash[:16] }}…</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
+<div class="panel p-0 overflow-hidden">
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Occurred at</th>
+        <th>Agent</th>
+        <th>Action</th>
+        <th>prev_hash</th>
+        <th>this_hash</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td class="text-xs muted font-mono">{{ r.rowid_seq }}</td>
+        <td class="text-xs muted">{{ r.occurred_at }}</td>
+        <td><span class="agent-badge agent-{{ r.agent }}">{{ r.agent }}</span></td>
+        <td><code>{{ r.action }}</code></td>
+        <td class="text-xs font-mono muted">{{ r.prev_hash[:16] }}…</td>
+        <td class="text-xs font-mono muted">{{ r.this_hash[:16] }}…</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% else %}
-<div class="panel text-slate-400">audit log is empty.</div>
+<div class="panel p-6 muted">Audit log is empty.</div>
 {% endif %}
+
 {% endblock %}

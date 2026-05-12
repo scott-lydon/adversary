@@ -1,27 +1,52 @@
 {% extends "_base.html" %}
-{% block title %}Coverage{% endblock %}
+{% block title %}— Coverage{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold">Coverage matrix</h1>
+
+<h1 class="text-3xl font-bold mb-2">Coverage matrix</h1>
+<p class="muted text-sm mb-6">
+  One row per (category, subcategory) pair. Pass-rate is the fraction of
+  runs where the target successfully defended (verdict = fail).
+</p>
+
 {% if rows %}
-<table class="w-full panel text-sm">
-  <thead class="text-slate-400 text-left">
-    <tr><th>Category</th><th>Subcategory</th><th>Runs</th><th>Success</th><th>Partial</th><th>Fail</th><th>Pass-rate</th></tr>
-  </thead>
-  <tbody>
-  {% for r in rows %}
-    <tr class="border-t border-slate-700">
-      <td>{{ r.category }}</td>
-      <td>{{ r.subcategory }}</td>
-      <td>{{ r.runs }}</td>
-      <td>{{ r.successes }}</td>
-      <td>{{ r.partials }}</td>
-      <td>{{ r.fails }}</td>
-      <td><span class="badge {{ r.cell_class }}">{{ "%.0f"|format(100*r.pass_rate) }}%</span></td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
+<div class="panel p-0 overflow-hidden">
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>Subcategory</th>
+        <th class="text-right">Runs</th>
+        <th class="text-right bad">Success</th>
+        <th class="text-right warn">Partial</th>
+        <th class="text-right good">Fail</th>
+        <th>Defense rate</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>
+          <a href="/glossary/{{ r.category }}" class="no-underline">{{ r.category }}</a>
+        </td>
+        <td><code>{{ r.subcategory }}</code></td>
+        <td class="text-right">{{ r.runs }}</td>
+        <td class="text-right bad">{{ r.successes }}</td>
+        <td class="text-right warn">{{ r.partials }}</td>
+        <td class="text-right good">{{ r.fails }}</td>
+        <td>
+          {% set pct = (100 * r.pass_rate) | int %}
+          {% if r.pass_rate >= 0.8 %}{% set bcls = 'badge-good' %}
+          {% elif r.pass_rate >= 0.5 %}{% set bcls = 'badge-warn' %}
+          {% else %}{% set bcls = 'badge-bad' %}{% endif %}
+          <span class="badge {{ bcls }}">{{ pct }}%</span>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% else %}
-<div class="panel text-slate-400">coverage matrix is empty. run a scan first.</div>
+<div class="panel p-6 muted">Coverage matrix is empty. Run a scan first.</div>
 {% endif %}
+
 {% endblock %}

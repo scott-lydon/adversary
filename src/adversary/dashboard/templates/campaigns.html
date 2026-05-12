@@ -1,0 +1,55 @@
+{% extends "_base.html" %}
+{% block title %}— Campaigns{% endblock %}
+{% block content %}
+
+<h1 class="text-3xl font-bold mb-2">Campaigns</h1>
+<p class="muted text-sm mb-6">
+  Every orchestrator run that picked a category and drove the full
+  Red Team / Target / Judge / Documentation loop.
+</p>
+
+{% if campaigns %}
+<div class="panel p-0 overflow-hidden">
+  <table>
+    <thead>
+      <tr>
+        <th>Campaign ID</th>
+        <th>Started</th>
+        <th>Category</th>
+        <th class="text-right">Attacks</th>
+        <th class="text-right bad">Success</th>
+        <th class="text-right warn">Partial</th>
+        <th class="text-right good">Fail</th>
+        <th class="text-right">Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for c in campaigns %}
+      <tr>
+        <td>
+          <a href="/campaigns/{{ c.session_id }}" class="font-mono text-xs">{{ c.session_id }}</a>
+        </td>
+        <td class="text-xs muted">{{ c.created_at }}</td>
+        <td>
+          {% if c.category %}
+          <a href="/glossary/{{ c.category }}" class="no-underline">{{ c.category }}</a>
+          <span class="muted">/ {{ c.subcategory }}</span>
+          {% else %}
+          <span class="muted">—</span>
+          {% endif %}
+        </td>
+        <td class="text-right">{{ c.attacks_count }}</td>
+        <td class="text-right bad">{{ c.verdict_counts.success }}</td>
+        <td class="text-right warn">{{ c.verdict_counts.partial }}</td>
+        <td class="text-right good">{{ c.verdict_counts.fail }}</td>
+        <td class="text-right">${{ "%.4f"|format(c.dollar_cost or 0.0) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="panel p-6 muted">No campaigns yet. Run <code>adversary scan</code>.</div>
+{% endif %}
+
+{% endblock %}

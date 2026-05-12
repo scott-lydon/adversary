@@ -1,0 +1,268 @@
+{% extends "_base.html" %}
+{% block title %}— {{ finding.id }}{% endblock %}
+{% block content %}
+
+<a href="/findings" class="text-sm muted">&larr; findings</a>
+
+<!-- 1. Header -->
+<header class="panel p-6 my-6">
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div class="flex items-center gap-3 flex-wrap">
+      <span class="badge {% if finding.severity in ['Critical','High'] %}badge-bad{% elif finding.severity == 'Medium' %}badge-warn{% else %}badge-muted{% endif %}">{{ finding.severity }}</span>
+      <span class="badge badge-muted">{{ finding.status }}</span>
+      <h1 class="text-3xl font-bold font-mono">{{ finding.id }}</h1>
+    </div>
+    <a href="/findings/{{ finding.id }}/raw" class="badge badge-info no-underline">Raw markdown report &rarr;</a>
+  </div>
+  <p class="muted text-sm mt-3">
+    Discovered {{ finding.created_at }} &middot;
+    <a href="/glossary/{{ finding.category }}" class="no-underline">{{ finding.category }}</a> /
+    <a href="/glossary/{{ finding.category }}#{{ finding.subcategory }}" class="no-underline">{{ finding.subcategory }}</a>
+    &middot; target <code>{{ finding.target_version_when_discovered or 'unknown' }}</code>
+  </p>
+</header>
+
+<!-- 2. Plain-English summary -->
+<section class="panel p-6 mb-6">
+  <h2 class="text-xl font-semibold mb-3">What this means</h2>
+  {% if subcategory_info %}
+  <p class="text-sm leading-relaxed mb-4">{{ subcategory_info.what_it_means }}</p>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+    <div class="panel p-4 border-bad" style="border-width: 1px;">
+      <div class="text-xs uppercase muted tracking-wider mb-2">Why it matters</div>
+      <ul class="space-y-1 text-sm">
+        {% for r in subcategory_info.risks_if_exploited %}<li>&bull; <span class="muted">{{ r }}</span></li>{% endfor %}
+      </ul>
+    </div>
+    <div class="panel p-4" style="background: var(--panel2);">
+      <div class="text-xs uppercase muted tracking-wider mb-2">Concrete example</div>
+      <p class="text-sm muted">{{ subcategory_info.what_it_entails }}</p>
+    </div>
+  </div>
+  {% elif category_info %}
+  <p class="text-sm muted">{{ category_info.long_description }}</p>
+  <a href="/glossary/{{ finding.category }}" class="text-sm">Read the full encyclopedia entry &rarr;</a>
+  {% else %}
+  <p class="text-sm muted">No encyclopedia entry exists for this subcategory yet.</p>
+  {% endif %}
+</section>
+
+<!-- 3. What happened — the chain -->
+<section class="mb-8">
+  <h2 class="text-2xl font-bold mb-4">What happened</h2>
+
+  <!-- Step 1 -->
+  <div class="panel p-6 mb-4">
+    <div class="flex items-center gap-3 mb-3">
+      <span class="badge badge-info">Step 1</span>
+      <h3 class="text-lg font-semibold">Orchestrator picked the campaign</h3>
+    </div>
+    {% if campaign_id %}
+    <p class="text-sm muted">
+      Campaign id <a href="/campaigns/{{ campaign_id }}" class="font-mono">{{ campaign_id }}</a>
+      &middot; category <code>{{ finding.category }}</code>
+      &middot; subcategory <code>{{ finding.subcategory }}</code>.
+    </p>
+    {% if campaign_run %}
+    <p class="text-xs muted mt-1">Started {{ campaign_run.created_at }} via <code>{{ campaign_run.model }}</code>.</p>
+    {% endif %}
+    {% else %}
+    <p class="text-sm muted">Campaign id could not be reconstructed from the attack id.</p>
+    {% endif %}
+  </div>
+
+  <!-- Step 2 -->
+  <div class="panel p-6 mb-4">
+    <div class="flex items-center gap-3 mb-3">
+      <span class="badge badge-info">Step 2</span>
+      <h3 class="text-lg font-semibold">Red Team generated the attack</h3>
+    </div>
+    {% if attack %}
+    <p class="text-sm muted mb-3">
+      attack_id <a href="/attacks/{{ attack.attack_id }}" class="font-mono">{{ attack.attack_id }}</a>
+      {% if attack.generation_metadata %}
+      &middot; model <code>{{ attack.generation_metadata.model }}</code>
+      &middot; cost ${{ "%.4f"|format(attack.generation_metadata.dollar_cost or 0.0) }}
+      {% endif %}
+    </p>
+    <div class="space-y-3">
+      {% for msg in attack.prompt_sequence %}
+      <div class="role-bubble role-{{ msg.role }}">
+        <div class="mb-2">
+          <span class="badge {% if msg.role == 'user' %}badge-info{% elif msg.role == 'system' %}badge-warn{% else %}badge-good{% endif %}">{{ msg.role }}</span>
+        </div>
+        <div class="whitespace-pre-wrap text-sm">{{ msg.text }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-sm muted">Underlying attack row could not be located (attack_id={{ finding.lineage_root }}).</p>
+    {% endif %}
+  </div>
+
+  <!-- Step 3 -->
+  <div class="panel p-6 mb-4">
+    <div class="flex items-center gap-3 mb-3">
+      <span class="badge badge-info">Step 3</span>
+      <h3 class="text-lg font-semibold">Adversary sent it to the target</h3>
+    </div>
+    <p class="text-sm muted mb-3">
+      Target: <code>{{ target_url }}</code>
+      {% if target_url == 'echo://demo' %}
+      &middot; <em>Local in-process demo target. No actual HTTP call; the EchoTarget is intentionally vulnerable so the loop has something deterministic to find.</em>
+      {% else %}
+      &middot; endpoint <code>POST /chat</code>
+      &middot; injected into field <code>message</code> of the JSON body
+      {% endif %}
+    </p>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+      <div>
+        <div class="text-xs uppercase muted tracking-wider mb-2">Request sent</div>
+        {% if request_body %}
+        <pre class="text-xs overflow-x-auto" style="max-height: 280px;">{{ request_body | tojson(indent=2) }}</pre>
+        {% elif attack %}
+        <pre class="text-xs overflow-x-auto" style="max-height: 280px;">{{ {'messages': attack.prompt_sequence} | tojson(indent=2) }}</pre>
+        <p class="text-xs muted mt-1">(legacy scan; rerun to capture the full transcript)</p>
+        {% else %}
+        <p class="text-xs muted">No request body persisted.</p>
+        {% endif %}
+      </div>
+      <div>
+        <div class="text-xs uppercase muted tracking-wider mb-2">Response received</div>
+        {% if response_body %}
+        <div class="panel p-3" style="background: var(--panel2);">
+          <div class="whitespace-pre-wrap text-sm">{{ response_body.text }}</div>
+        </div>
+        <div class="flex flex-wrap gap-2 mt-2 text-xs">
+          <span class="badge badge-muted">latency {{ response_body.latency_ms }}ms</span>
+          {% if response_body.token_count %}
+          <span class="badge badge-muted">prompt tokens {{ response_body.token_count.prompt or 0 }}</span>
+          <span class="badge badge-muted">completion tokens {{ response_body.token_count.completion or 0 }}</span>
+          {% endif %}
+          {% if response_body.tool_calls %}<span class="badge badge-warn">tool_calls: {{ response_body.tool_calls|length }}</span>{% endif %}
+          {% if response_body.sources %}<span class="badge badge-info">sources cited: {{ response_body.sources|length }}</span>{% endif %}
+        </div>
+        {% if response_body.tool_calls %}
+        <details class="mt-2">
+          <summary class="cursor-pointer text-xs accent-text">Show tool calls</summary>
+          <pre class="text-xs mt-1">{{ response_body.tool_calls | tojson(indent=2) }}</pre>
+        </details>
+        {% endif %}
+        {% else %}
+        <p class="text-xs muted">
+          No response body persisted for this finding.
+          {% if verdict and verdict.target_response_hash %}Response hash on file: <code>{{ verdict.target_response_hash }}</code>.{% endif %}
+          Re-run <code>adversary scan</code> on the current build to capture full transcripts.
+        </p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4 -->
+  <div class="panel p-6 mb-4">
+    <div class="flex items-center gap-3 mb-3">
+      <span class="badge badge-info">Step 4</span>
+      <h3 class="text-lg font-semibold">Judge ruled</h3>
+    </div>
+    {% if verdict %}
+    {% if verdict.verdict == 'success' %}{% set vcls = 'badge-bad' %}
+    {% elif verdict.verdict == 'partial' %}{% set vcls = 'badge-warn' %}
+    {% else %}{% set vcls = 'badge-good' %}{% endif %}
+    <div class="flex items-center gap-3 mb-3 flex-wrap">
+      <span class="badge {{ vcls }}">verdict = {{ verdict.verdict }}</span>
+      <span class="badge badge-muted">confidence {{ "%.2f"|format(verdict.confidence) }}</span>
+      <span class="badge badge-muted">rubric {{ verdict.rubric_version }}</span>
+      <span class="badge badge-muted">judge <code>{{ verdict.judge_model }}</code></span>
+    </div>
+    {% if verdict.evidence %}
+    <div class="mb-2">
+      <div class="text-xs uppercase muted tracking-wider mb-1">Evidence</div>
+      <ul class="space-y-1 text-sm">
+        {% for e in verdict.evidence %}<li>&bull; <span class="muted">{{ e }}</span></li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    {% if verdict.notes %}<div class="text-xs muted">Notes: {{ verdict.notes }}</div>{% endif %}
+    {% else %}
+    <p class="text-sm muted">No verdict row matched this attack.</p>
+    {% endif %}
+  </div>
+
+  <!-- Step 5 -->
+  <div class="panel p-6">
+    <div class="flex items-center gap-3 mb-3">
+      <span class="badge badge-info">Step 5</span>
+      <h3 class="text-lg font-semibold">Documentation wrote the report</h3>
+    </div>
+    <p class="text-sm muted">
+      Markdown report at <code>{{ finding.report_path or '(none)' }}</code>.
+    </p>
+    {% if finding.report_path %}
+    <a href="/findings/{{ finding.id }}/raw" class="text-sm">View raw markdown &rarr;</a>
+    {% endif %}
+  </div>
+</section>
+
+<!-- 4. Mutation lineage -->
+{% if mutation_lineage %}
+<section class="panel p-6 mb-6">
+  <h2 class="text-xl font-semibold mb-3">Mutation lineage</h2>
+  <ol class="space-y-2 pl-4 border-l" style="border-color: var(--accent);">
+    {% for parent in mutation_lineage %}
+    <li class="text-sm">
+      <a class="font-mono text-xs" href="/attacks/{{ parent }}">{{ parent }}</a>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+
+<!-- 5. Audit trail -->
+<section class="panel p-6 mb-6">
+  <h2 class="text-xl font-semibold mb-3">Audit trail</h2>
+  {% if audit_rows %}
+  <table>
+    <thead><tr><th>#</th><th>Occurred</th><th>Agent</th><th>Action</th><th>this_hash</th></tr></thead>
+    <tbody>
+      {% for r in audit_rows %}
+      <tr>
+        <td class="text-xs muted">{{ r.rowid_seq }}</td>
+        <td class="text-xs muted">{{ r.occurred_at }}</td>
+        <td><span class="agent-badge agent-{{ r.agent }}">{{ r.agent }}</span></td>
+        <td><code>{{ r.action }}</code></td>
+        <td class="text-xs font-mono">
+          <details>
+            <summary class="cursor-pointer">{{ r.this_hash[:12] }}…</summary>
+            <code class="break-all text-xs">{{ r.this_hash }}</code>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted text-sm">No audit rows match this finding.</p>
+  {% endif %}
+</section>
+
+<!-- 6. Recommended remediation -->
+{% if subcategory_info %}
+<section class="panel p-6">
+  <h2 class="text-xl font-semibold mb-3">Recommended remediation</h2>
+  <p class="muted text-sm mb-4">Ordered cheapest-first.</p>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    {% for fix in subcategory_info.how_its_fixed %}
+    <div class="panel p-4 border-good" style="border-width: 1px;">
+      <div class="flex items-start gap-3">
+        <span class="badge badge-good">{{ loop.index }}</span>
+        <span class="text-sm muted">{{ fix }}</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% endblock %}

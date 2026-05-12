@@ -1,0 +1,54 @@
+{% extends "_base.html" %}
+{% block title %}— Verdicts{% endblock %}
+{% block content %}
+
+<h1 class="text-3xl font-bold mb-2">Verdicts</h1>
+<p class="muted text-sm mb-6">
+  The Judge agent's rulings, one per attack.
+  <strong class="bad">verdict = success</strong> means the <em>attack</em>
+  succeeded so the target is the loser.
+  <strong class="good">verdict = fail</strong> means the target defended
+  itself.
+</p>
+
+{% if verdicts %}
+<div class="panel p-0 overflow-hidden">
+  <table>
+    <thead>
+      <tr>
+        <th>Attack</th>
+        <th>Verdict <span class="muted font-normal text-xs">(success = attack won)</span></th>
+        <th class="text-right">Confidence</th>
+        <th>Evidence</th>
+        <th>Notes</th>
+        <th>Judge</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for v in verdicts %}
+      {% if v.verdict == 'success' %}{% set vcls = 'badge-bad' %}
+      {% elif v.verdict == 'partial' %}{% set vcls = 'badge-warn' %}
+      {% else %}{% set vcls = 'badge-good' %}{% endif %}
+      <tr>
+        <td><a class="font-mono text-xs" href="/attacks/{{ v.attack_id }}">{{ v.attack_id }}</a></td>
+        <td><span class="badge {{ vcls }}">{{ v.verdict }}</span></td>
+        <td class="text-right">{{ "%.2f"|format(v.confidence) }}</td>
+        <td class="text-sm">
+          {% if v.evidence %}
+            {{ (v.evidence|join(' ')) [:120] }}{% if (v.evidence|join(' '))|length > 120 %}…{% endif %}
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td class="text-xs muted">{{ v.notes or '' }}</td>
+        <td class="text-xs muted">{{ v.judge_model }}</td>
+        <td class="text-xs muted">{{ v.created_at }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="panel p-6 muted">No verdicts recorded yet.</div>
+{% endif %}
+
+{% endblock %}
