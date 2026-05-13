@@ -257,7 +257,7 @@
         Run scan now
       </button>
       <span class="text-xs muted">
-        {% if not target.allowlisted %}Disabled until you allowlist the target above.{% else %}The request blocks until the scan completes; ~2s for scripted, longer for live.{% endif %}
+        {% if not target.allowlisted %}Disabled until you allowlist the target above.{% else %}Submits instantly and takes you to a live progress page that streams per-agent activity (Red Team → Target → Judge → Documentation) as the scan runs.{% endif %}
       </span>
     </div>
   </form>

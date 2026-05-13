@@ -48,12 +48,20 @@ if git diff --name-only "$OLD" "$NEW" | grep -qxE '^deploy/Caddyfile$|^deploy/in
     CADDY_CHANGED=1
 fi
 
-# Detect Dockerfile / compose / pyproject changes — these all need a
-# `docker compose up --build` to take effect. Pure source edits are
-# picked up by the existing `pip install --editable .` mount, so for
-# those we just restart the container to re-import the modules.
+# Rebuild on anything that ends up baked into the image. The Dockerfile
+# does `COPY src /app/src` at build time and there is no bind mount of
+# host /opt/adversary/src to /app/src in docker-compose.yml, so a pure
+# `docker compose up --detach` restarts the SAME image with the SAME
+# stale source. Pulling new source files into /opt/adversary/src/ on
+# the host does nothing visible to the running container until we
+# rebuild. (This bit us on the streaming-progress deploy: the form
+# kept behaving like the old sync version because the host had the new
+# code but the container kept its old copy.) Treat src/, templates/,
+# any .py / .html / .css inside the package, plus the existing
+# Dockerfile / compose / pyproject as build-triggering paths.
 NEEDS_BUILD=0
-if git diff --name-only "$OLD" "$NEW" | grep -qxE '^deploy/Dockerfile$|^deploy/docker-compose\.yml$|^pyproject\.toml$'; then
+if git diff --name-only "$OLD" "$NEW" \
+    | grep -qE '^deploy/Dockerfile$|^deploy/docker-compose\.yml$|^pyproject\.toml$|^src/|\.(py|html|css|js)$'; then
     NEEDS_BUILD=1
 fi
 
