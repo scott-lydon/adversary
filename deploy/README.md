@@ -35,13 +35,34 @@ bash deploy/install-on-hetzner.sh
 
 ## Re-deploy after a code change
 
+**No action needed.** A per-minute cron on the host runs
+`/opt/adversary/deploy/auto-deploy.sh`, which polls the current branch's
+remote head, ff-merges any new commits, and reruns
+`docker compose up --detach` (with `--build` when the Dockerfile,
+`docker-compose.yml`, or `pyproject.toml` changed). It also re-runs the
+installer when `deploy/Caddyfile` or the installer itself changed, so
+proxy-config tweaks roll without a manual SSH.
+
+This mirrors the Clinical Co-Pilot's `/opt/openemr/auto-deploy.sh` flow
+so both projects on this host follow the same pattern.
+
+To force an immediate redeploy without waiting for the cron tick:
+
 ```bash
-ssh root@5.161.253.237 'cd /opt/adversary && git pull && \
-  docker compose -f deploy/docker-compose.yml up -d --build'
+ssh root@5.161.253.237 bash /opt/adversary/deploy/auto-deploy.sh
 ```
 
-The installer is idempotent so the full `bash deploy/install-on-hetzner.sh`
-also works as a re-deploy command.
+To watch the deploy log live:
+
+```bash
+ssh root@5.161.253.237 tail -f /var/log/adversary-deploy.log
+```
+
+The full installer is idempotent and can be re-run any time:
+
+```bash
+ssh root@5.161.253.237 bash /opt/adversary/deploy/install-on-hetzner.sh
+```
 
 ## Operational notes
 

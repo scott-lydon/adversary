@@ -76,13 +76,29 @@ if ! grep -q 'Caddyfile.d/\*\.caddy' "${CADDY_MAIN}"; then
     echo "import /etc/caddy/Caddyfile.d/*.caddy" >> "${CADDY_MAIN}"
 fi
 
-# Generate and persist the basic-auth password if it does not already exist.
-# Plaintext is written once to /opt/adversary/.htpasswd-source (mode 600).
-# The bcrypt hash is sed-substituted into the installed Caddyfile fragment
-# (NOT env-var-expanded, because `caddy validate` runs without the systemd
-# EnvironmentFile and would see an empty placeholder).
-if [[ ! -f "${ADV_ROOT}/.htpasswd-bcrypt" ]]; then
-    note "generating dashboard password (plaintext: ${ADV_ROOT}/.htpasswd-source, bcrypt: ${ADV_ROOT}/.htpasswd-bcrypt; both 0600)"
+# Generate and persist the basic-auth password.
+#
+# Plaintext lives at /opt/adversary/.htpasswd-source mode 600; bcrypt
+# at /opt/adversary/.htpasswd-bcrypt mode 600. The bcrypt is
+# sed-substituted into the Caddyfile fragment (NOT env-var-expanded;
+# `caddy validate` does not load the systemd EnvironmentFile and would
+# see an empty placeholder).
+#
+# To set or rotate the password explicitly:
+#   ADVERSARY_BASIC_AUTH_PLAINTEXT='pass' bash deploy/install-on-hetzner.sh
+#
+# If neither the env var nor the existing file is set, a fresh random
+# password is generated.
+if [[ -n "${ADVERSARY_BASIC_AUTH_PLAINTEXT:-}" ]]; then
+    note "ADVERSARY_BASIC_AUTH_PLAINTEXT supplied — overwriting password files"
+    PLAINTEXT="${ADVERSARY_BASIC_AUTH_PLAINTEXT}"
+    install -m 0600 /dev/null "${ADV_ROOT}/.htpasswd-source"
+    printf '%s\n' "${PLAINTEXT}" > "${ADV_ROOT}/.htpasswd-source"
+    HASH=$(caddy hash-password --plaintext "${PLAINTEXT}")
+    install -m 0600 /dev/null "${ADV_ROOT}/.htpasswd-bcrypt"
+    printf '%s\n' "${HASH}" > "${ADV_ROOT}/.htpasswd-bcrypt"
+elif [[ ! -f "${ADV_ROOT}/.htpasswd-bcrypt" ]]; then
+    note "generating random dashboard password (plaintext: ${ADV_ROOT}/.htpasswd-source, bcrypt: ${ADV_ROOT}/.htpasswd-bcrypt; both 0600)"
     PLAINTEXT=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
     install -m 0600 /dev/null "${ADV_ROOT}/.htpasswd-source"
     printf '%s\n' "${PLAINTEXT}" > "${ADV_ROOT}/.htpasswd-source"
@@ -146,8 +162,34 @@ case "${HTTP_CODE}" in
         ;;
 esac
 
+# ---------------------------------------------------------------------------
+# Auto-deploy cron — mirrors the Clinical Co-Pilot's auto-deploy pattern
+# (see /opt/openemr/auto-deploy.sh). Polls origin every minute, ff-merges,
+# rebuilds the compose stack only when the relevant files changed.
+# ---------------------------------------------------------------------------
+
+CRON_LINE='* * * * * /opt/adversary/deploy/auto-deploy.sh'
+CRON_TMP=$(mktemp)
+crontab -l 2>/dev/null > "${CRON_TMP}" || true
+
+if grep -Fqx "${CRON_LINE}" "${CRON_TMP}"; then
+    note "auto-deploy cron already installed"
+else
+    note "installing auto-deploy cron line: ${CRON_LINE}"
+    printf '%s\n' "${CRON_LINE}" >> "${CRON_TMP}"
+    crontab "${CRON_TMP}"
+fi
+rm -f "${CRON_TMP}"
+
+# Make sure the log file exists with sane permissions so the first cron
+# invocation does not fail on a missing path.
+touch /var/log/adversary-deploy.log
+chmod 0644 /var/log/adversary-deploy.log
+
 note "done"
 echo
-echo "Dashboard URL: https://${SUBDOMAIN}"
-echo "Login:         admin / \$(cat ${ADV_ROOT}/.htpasswd-source)"
-echo "Logs:          docker compose -f ${COMPOSE_FILE} logs -f adversary"
+echo "Dashboard URL:    https://${SUBDOMAIN}"
+echo "Login:            admin / \$(cat ${ADV_ROOT}/.htpasswd-source)"
+echo "Container logs:   docker compose -f ${COMPOSE_FILE} logs -f adversary"
+echo "Deploy log:       tail -f /var/log/adversary-deploy.log"
+echo "Manual deploy:    bash /opt/adversary/deploy/auto-deploy.sh    # forces a check now"
