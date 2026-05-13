@@ -48,7 +48,9 @@ class ClinicalCoPilotAdapter(TargetAdapter):
     async def healthcheck(self) -> bool:
         url = f"{self.base_url}/healthz"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+            async with httpx.AsyncClient(
+                timeout=self.timeout_s, follow_redirects=True
+            ) as client:
                 resp = await client.get(url)
         except httpx.HTTPError as exc:  # network/dns/connect failure
             raise TargetUnreachable(
@@ -90,7 +92,9 @@ class ClinicalCoPilotAdapter(TargetAdapter):
     ) -> dict[str, Any]:
         url = f"{self.base_url}/upload"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+            async with httpx.AsyncClient(
+                timeout=self.timeout_s, follow_redirects=True
+            ) as client:
                 resp = await client.post(
                     url,
                     headers={"Authorization": f"Bearer {self.task_token}"},
@@ -136,7 +140,9 @@ class ClinicalCoPilotAdapter(TargetAdapter):
             }
             start = time.perf_counter()
             try:
-                async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+                async with httpx.AsyncClient(
+                timeout=self.timeout_s, follow_redirects=True
+            ) as client:
                     resp = await client.post(
                         url, json=payload, headers=self._headers()
                     )
