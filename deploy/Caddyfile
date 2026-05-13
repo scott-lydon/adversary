@@ -15,15 +15,20 @@ adversary.5-161-253-237.sslip.io {
 
     encode zstd gzip
 
-    # No Basic-Auth gate. Intentional: graders need frictionless access
-    # and Safari (and some other browsers) re-prompted the auth dialog
-    # on every internal navigation, which made the dashboard unusable.
-    # /audit/tamper* is still firewalled below so the most destructive
-    # endpoint is not reachable through the proxy. To re-add a gate:
+    # Basic-Auth gate: admin / pass (cohort-demo credentials, NOT secret).
+    # The bcrypt hash below was generated with `bcrypt.gensalt(rounds=10)`
+    # and verified locally before commit; the plaintext is intentionally
+    # public so graders can reach the dashboard with zero side-channels.
     #
-    #   basic_auth {
-    #       admin <bcrypt-hash-from `caddy hash-password`>
-    #   }
+    # Safari quirk note: when the gate was on with a randomly-generated
+    # password earlier, Safari re-prompted on every internal navigation.
+    # That behavior is a Safari path-cache bug, not a server-side issue
+    # (Caddy emits a stable WWW-Authenticate realm = the host). Workaround
+    # for graders on Safari: use Chrome/Firefox, or check "Remember this
+    # password" the first time. Re-removing the gate is a one-line edit.
+    basic_auth {
+        admin $2b$10$y9/FxsfGZb0oMlf78KHDM.q6dgp9/YR7gSoluhhtXrr3JvT4Zw256
+    }
 
     reverse_proxy 127.0.0.1:8765 {
         header_up X-Real-IP {remote_host}
