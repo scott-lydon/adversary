@@ -17,7 +17,7 @@
 {% endif %}
 
 {% if campaigns %}
-<div class="panel p-0 overflow-hidden">
+<div class="panel p-0 table-wrap">
   <table>
     <thead>
       <tr>
@@ -35,12 +35,12 @@
     <tbody>
     {% for c in campaigns %}
       <tr>
-        <td>
-          <a href="/campaigns/{{ c.session_id }}" class="font-mono text-xs">{{ c.session_id }}</a>
+        <td class="cell-mono">
+          <a href="/campaigns/{{ c.session_id }}" class="no-underline">{{ c.session_id }}</a>
         </td>
-        <td class="text-xs muted">{{ c.created_at }}</td>
-        <td>{% with target_id=c.target_id %}{% include '_target_badge.html' %}{% endwith %}</td>
-        <td>
+        <td class="text-xs muted nowrap">{{ (c.created_at or '')|replace('T', ' ')|replace('+00:00', ' UTC')|truncate(20, True, '') }}</td>
+        <td class="nowrap">{% with target_id=c.target_id %}{% include '_target_badge.html' %}{% endwith %}</td>
+        <td class="nowrap">
           {% if c.category %}
           <a href="/glossary/{{ c.category }}" class="no-underline">{{ c.category }}</a>
           <span class="muted">/ {{ c.subcategory }}</span>
@@ -48,11 +48,11 @@
           <span class="muted">—</span>
           {% endif %}
         </td>
-        <td class="text-right">{{ c.attacks_count }}</td>
-        <td class="text-right bad">{{ c.verdict_counts.success }}</td>
-        <td class="text-right warn">{{ c.verdict_counts.partial }}</td>
-        <td class="text-right good">{{ c.verdict_counts.fail }}</td>
-        <td class="text-right">${{ "%.4f"|format(c.dollar_cost or 0.0) }}</td>
+        <td class="text-right nowrap">{{ c.attacks_count }}</td>
+        <td class="text-right bad nowrap">{{ c.verdict_counts.success }}</td>
+        <td class="text-right warn nowrap">{{ c.verdict_counts.partial }}</td>
+        <td class="text-right good nowrap">{{ c.verdict_counts.fail }}</td>
+        <td class="text-right nowrap">${{ "%.4f"|format(c.dollar_cost or 0.0) }}</td>
       </tr>
     {% endfor %}
     </tbody>
