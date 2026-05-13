@@ -50,3 +50,4 @@ adversary.db
 adversary.db-journal
 regress.xml
 pytest-cache-files-*/
+.env.live
