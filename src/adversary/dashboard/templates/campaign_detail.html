@@ -11,14 +11,68 @@
     <a href="/glossary/{{ category_key }}" class="badge badge-info no-underline">{{ category_key }} / {{ subcategory_key }}</a>
     {% endif %}
   </div>
-  {% if run %}
   <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5 text-sm">
-    <div><div class="muted text-xs uppercase tracking-wider">Model</div><div class="mt-1">{{ run.model }}</div></div>
-    <div><div class="muted text-xs uppercase tracking-wider">Started</div><div class="mt-1">{{ run.created_at }}</div></div>
-    <div><div class="muted text-xs uppercase tracking-wider">Latency</div><div class="mt-1">{{ run.latency_ms }} ms</div></div>
-    <div><div class="muted text-xs uppercase tracking-wider">Cost</div><div class="mt-1">${{ "%.4f"|format(run.dollar_cost or 0.0) }}</div></div>
+    <div>
+      <div class="muted text-xs uppercase tracking-wider">Red Team model</div>
+      <div class="mt-1">
+        {% if breakdown.red_team_models %}
+          {{ breakdown.red_team_models | join(', ') }}
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
+      </div>
+    </div>
+    <div>
+      <div class="muted text-xs uppercase tracking-wider">Judge model</div>
+      <div class="mt-1">
+        {% if breakdown.judge_models %}
+          {{ breakdown.judge_models | join(', ') }}
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
+      </div>
+    </div>
+    <div>
+      <div class="muted text-xs uppercase tracking-wider">Started</div>
+      <div class="mt-1">{{ breakdown.started_at or (run.created_at if run else '—') }}</div>
+    </div>
+    <div>
+      <div class="muted text-xs uppercase tracking-wider">Wall latency</div>
+      <div class="mt-1">
+        {% if latency_ms is not none %}{{ latency_ms }} ms{% else %}<span class="muted">—</span>{% endif %}
+      </div>
+    </div>
+    <div>
+      <div class="muted text-xs uppercase tracking-wider">Cost (this campaign)</div>
+      <div class="mt-1 accent-text font-semibold">${{ "%.6f"|format(breakdown.total_dollar_cost) }}</div>
+    </div>
+    <div>
+      <div class="muted text-xs uppercase tracking-wider">Attacks</div>
+      <div class="mt-1">{{ breakdown.attacks_total }}</div>
+    </div>
+    <div>
+      <div class="muted text-xs uppercase tracking-wider">Verdicts</div>
+      <div class="mt-1">
+        <span class="bad">{{ breakdown.verdict_mix.success or 0 }}</span> /
+        <span class="warn">{{ breakdown.verdict_mix.partial or 0 }}</span> /
+        <span class="good">{{ breakdown.verdict_mix.fail or 0 }}</span>
+        <span class="muted text-xs">(success/partial/fail)</span>
+      </div>
+    </div>
+    <div>
+      <div class="muted text-xs uppercase tracking-wider">Cost by agent</div>
+      <div class="mt-1 text-xs">
+        {% for r in breakdown.cost_rows %}
+          {% if r.dollar_cost and r.dollar_cost > 0 %}
+            <div><span class="agent-badge agent-{{ r.agent }}">{{ r.agent }}</span> ${{ "%.6f"|format(r.dollar_cost) }}</div>
+          {% endif %}
+        {% endfor %}
+        {% if not breakdown.cost_rows or breakdown.total_dollar_cost == 0 %}
+          <span class="muted">no spend recorded</span>
+        {% endif %}
+      </div>
+    </div>
   </div>
-  {% endif %}
 </header>
 
 <h2 class="text-xl font-semibold mb-3">Audit timeline</h2>
