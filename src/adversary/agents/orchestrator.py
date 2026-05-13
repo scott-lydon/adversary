@@ -305,6 +305,27 @@ class OrchestratorAgent:
         )
         attacks = await self.red_team.generate(brief)
         red_queue.extend(attacks)
+        # Persist a per-attack red_team audit row so the campaign timeline
+        # shows the Red Team's contribution (model, cost, tokens) instead
+        # of silently jumping from "campaign_start" to "target_adapter".
+        # Without this the dashboard hides the most expensive agent.
+        for atk in attacks:
+            md = atk.generation_metadata
+            self.store.append_audit(
+                agent="red_team",
+                action="attack_generated",
+                payload={
+                    "campaign_id": campaign_id,
+                    "attack_id": atk.attack_id,
+                    "model": getattr(md, "model", None),
+                    "dollar_cost": float(getattr(md, "dollar_cost", 0.0) or 0.0),
+                    "tokens_in": int(getattr(md, "tokens_in", 0) or 0),
+                    "tokens_out": int(getattr(md, "tokens_out", 0) or 0),
+                    "target_id": self.target_id,
+                    "target_name": self.target_name,
+                },
+                occurred_at=_utcnow(),
+            )
         await self._emit(
             "red_team_done",
             campaign_id=campaign_id,
@@ -533,6 +554,47 @@ class OrchestratorAgent:
             partials=outcome.partials,
             fails=outcome.fails,
             dollar_cost=self.spent_usd,
+        )
+        # Roll up real totals onto the orchestrator's agent_runs row.
+        # Without this the /campaigns table and dashboard summary card
+        # silently report $0 even when the campaign actually spent money.
+        try:
+            self.store.update_agent_run_totals(
+                agent="orchestrator",
+                session_id=campaign_id,
+                dollar_cost=float(self.spent_usd),
+                latency_ms=0,
+                tokens_in=0,
+                tokens_out=0,
+            )
+        except ValueError as exc:
+            # Don't swallow — this means the placeholder insert at
+            # campaign_start failed, which is its own bug. Log and re-raise
+            # so the campaign returns an error rather than silently giving
+            # a misleading $0.
+            logger.error(
+                "orchestrator.update_agent_run_totals_failed",
+                campaign_id=campaign_id,
+                error=str(exc),
+            )
+            raise
+        # And a campaign_done audit row so the timeline shows the run
+        # actually closed (separate from the SSE _emit, which is only
+        # visible to live viewers).
+        self.store.append_audit(
+            agent="orchestrator",
+            action="campaign_done",
+            payload={
+                "campaign_id": campaign_id,
+                "successes": outcome.successes,
+                "partials": outcome.partials,
+                "fails": outcome.fails,
+                "dollar_cost": float(self.spent_usd),
+                "reports": len(outcome.reports),
+                "target_id": self.target_id,
+                "target_name": self.target_name,
+            },
+            occurred_at=_utcnow(),
         )
         await self._emit(
             "campaign_done",
