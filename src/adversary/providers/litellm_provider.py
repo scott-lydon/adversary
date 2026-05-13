@@ -205,11 +205,12 @@ class LiteLLMProvider:
             "- Variety matters: do not paraphrase the same trick twice."
         )
 
-        # 4000 tokens is enough headroom for 5 entries of ~80 words each
-        # plus JSON scaffolding. Llama 3.3 70B was emitting >1500 tokens
-        # with the old prompt and the trailing brace got cut, causing
-        # _parse_json_object to fail on truncated JSON. If you change n,
-        # adjust this ceiling: budget ~400 tokens per attack with overhead.
+        # 16000 tokens is intentionally generous so the model never
+        # truncates mid-string and the parser never sees half a JSON
+        # object. The prompt-side length cap above (50 words per
+        # prompt) keeps actual responses well under this ceiling; this
+        # number is the safety net, not the budget. If a future change
+        # adds richer fields or larger n, the safety net is still here.
         text, usage = await self._call(
             "red_team",
             [
@@ -217,7 +218,7 @@ class LiteLLMProvider:
                 {"role": "user", "content": user},
             ],
             response_format={"type": "json_object"},
-            max_tokens=4000,
+            max_tokens=16000,
         )
         payload = _parse_json_object(text, role="red_team", model=usage["model"])
         raw_attacks = payload.get("attacks")
@@ -306,7 +307,9 @@ class LiteLLMProvider:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            max_tokens=800,
+            # 4000 leaves room for evidence arrays and notes; the verdict
+            # itself is tiny but a thorough judge will quote response text.
+            max_tokens=4000,
         )
         payload = _parse_json_object(text, role="judge", model=usage["model"])
 
@@ -396,7 +399,10 @@ class LiteLLMProvider:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            max_tokens=2000,
+            # 8000 lets gpt-5 produce a full 8-section report without
+            # truncating the Validation Plan or Mutation Lineage tail,
+            # which is what DocumentationAgent.write_report validates.
+            max_tokens=8000,
         )
         return text.strip()
 
@@ -436,7 +442,10 @@ class LiteLLMProvider:
                 {"role": "user", "content": user},
             ],
             response_format={"type": "json_object"},
-            max_tokens=200,
+            # The orchestrator only needs to emit {"category": "..."} but
+            # gpt-5-mini sometimes appends a reasoning blob; 1000 covers
+            # both shapes without truncating the closing brace.
+            max_tokens=1000,
         )
         payload = _parse_json_object(text, role="orchestrator", model=usage["model"])
         chosen = str(payload.get("category", "")).strip().lower()

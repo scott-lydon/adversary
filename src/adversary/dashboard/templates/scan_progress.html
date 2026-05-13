@@ -14,9 +14,9 @@
 </div>
 
 <div class="panel p-5 mb-5">
-  <div class="flex items-center justify-between mb-3">
-    <div id="progress-label" class="text-base font-medium">Spinning up the orchestrator…</div>
-    <div id="progress-meta" class="text-sm muted">0 / {{ expected_attacks }} attacks</div>
+  <div class="flex items-start justify-between mb-3 gap-4">
+    <div id="progress-label" class="text-base font-medium flex-1 min-w-0" style="word-break: break-word; overflow-wrap: anywhere;">Spinning up the orchestrator…</div>
+    <div id="progress-meta" class="text-sm muted shrink-0 whitespace-nowrap">0 / {{ expected_attacks }} attacks</div>
   </div>
   <div class="h-3 rounded-full overflow-hidden" style="background: var(--panel2);">
     <div id="progress-bar"
@@ -76,6 +76,7 @@ let lastCost = 0;
 
 // kind → which agent badge to wear.
 const AGENT_FOR_KIND = {
+  startup:              "orchestrator",
   scan_start:           "orchestrator",
   campaign_start:       "orchestrator",
   budget_exhausted:     "orchestrator",
@@ -93,14 +94,18 @@ const AGENT_FOR_KIND = {
 };
 
 // kind → human-readable summary. The shape of `e` is the event payload.
+// No truncation: the event log column is flex-1 so the row wraps if a
+// line is long. The red_team prompt caps each attack at ~50 words so
+// the preview stays readable without a slice().
 const LABEL_FOR_KIND = {
+  startup:              (e) => e.label || `Startup step: ${e.step}`,
   scan_start:           (e) => `Orchestrator started · ${e.provider} provider, budget $${(e.budget_usd||0).toFixed(2)}, up to ${e.max_campaigns} campaigns`,
   campaign_start:       (e) => `Campaign ${e.campaign_index + 1}: orchestrator picked ${e.category} / ${e.subcategory}`,
   budget_exhausted:     (e) => `Budget exhausted at $${(e.spent_usd||0).toFixed(4)}; halting before next campaign.`,
   red_team_start:       (e) => `Red Team (${(e.model||"").replace("together_ai/","")}) generating attacks…`,
   red_team_done:        (e) => `Red Team produced ${e.attacks} attacks`,
-  target_send:          (e) => `Sending attack ${e.n}/${e.of} to target: “${(e.preview||"").slice(0,60)}…”`,
-  target_response:      (e) => `Target responded in ${e.latency_ms}ms`,
+  target_send:          (e) => `Sending attack ${e.n}/${e.of} to target: "${e.preview || ""}"`,
+  target_response:      (e) => `Target responded in ${e.latency_ms}ms: "${e.response_preview || ""}"`,
   judge_start:          (e) => `Judge evaluating attack ${e.n}/${e.of}`,
   judge_done:           (e) => `Judge → ${e.verdict} (${Math.round((e.confidence||0)*100)}% confidence)`,
   documentation_start:  (e) => `Documentation writing report for ${e.exploits} exploit(s)…`,
@@ -126,11 +131,27 @@ function appendEvent(ev) {
 
   const li = document.createElement("li");
   li.className = "flex gap-3 items-start";
-  li.innerHTML = `
-    <span class="text-xs muted cell-mono shrink-0" style="min-width: 86px;">${fmtClock(ev.ts)}</span>
-    <span class="agent-badge agent-${agent}">${agent}</span>
-    <span class="flex-1">${label}</span>
-  `;
+  // Build with textContent (not innerHTML) so attack/response previews
+  // can't inject HTML into the dashboard. Targets are adversarial by
+  // design — the log must treat their text as opaque.
+  const tsSpan = document.createElement("span");
+  tsSpan.className = "text-xs muted cell-mono shrink-0";
+  tsSpan.style.minWidth = "86px";
+  tsSpan.textContent = fmtClock(ev.ts);
+
+  const agentSpan = document.createElement("span");
+  agentSpan.className = `agent-badge agent-${agent} shrink-0`;
+  agentSpan.textContent = agent;
+
+  const labelSpan = document.createElement("span");
+  labelSpan.className = "flex-1 min-w-0";
+  labelSpan.style.wordBreak = "break-word";
+  labelSpan.style.overflowWrap = "anywhere";
+  labelSpan.textContent = label;
+
+  li.appendChild(tsSpan);
+  li.appendChild(agentSpan);
+  li.appendChild(labelSpan);
   elLog.prepend(li);
 
   if (LABEL_FOR_KIND[ev.kind]) elLabel.textContent = label;

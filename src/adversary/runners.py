@@ -102,15 +102,52 @@ async def run_scan_for_target(
     so the /scans/{id} SSE stream can show per-agent live progress; the CLI
     leaves it None and the loop runs unchanged.
     """
+    # Each pre-scan step gets its own progress event so the dashboard's
+    # /scans/{id} page shows continuous motion. The user reported that the
+    # 2-4 second gap between submit and the first orchestrator event made
+    # the scan look stuck. Each step is wrapped so a thrown exception still
+    # raises out of the function — the dashboard catches it and surfaces
+    # the message on the progress page.
+    async def _emit(kind: str, **fields: Any) -> None:
+        if progress_callback is not None:
+            try:
+                await progress_callback(kind, fields)
+            except Exception:  # noqa: BLE001 - never let UI breaks halt a scan
+                pass
+
+    await _emit(
+        "startup", step="allowlist_check", label="Checking target allowlist…"
+    )
     assert_allowlisted(record)
 
+    await _emit(
+        "startup",
+        step="open_adapter",
+        label=f"Opening adapter for {record.base_url}…",
+    )
     adapter = open_adapter(
         record.base_url, task_token=task_token, patient_id=patient_id
     )
+
+    await _emit(
+        "startup",
+        step="build_provider",
+        label=f"Building {provider_name} provider (validates API keys)…",
+    )
     provider = make_provider(provider_name)
 
+    await _emit(
+        "startup",
+        step="touch_target",
+        label="Recording target last_used_at…",
+    )
     store.touch_target(record.id, used_at=datetime.now(timezone.utc).isoformat())
 
+    await _emit(
+        "startup",
+        step="orchestrator_init",
+        label="Constructing orchestrator…",
+    )
     orch = OrchestratorAgent(
         adapter=adapter,
         provider=provider,

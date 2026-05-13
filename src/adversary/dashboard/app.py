@@ -867,36 +867,13 @@ def create_app() -> FastAPI:
                 )
         else:
             seed_int = None
-        try:
-            effective_task_token, effective_patient_id = await _resolve_copilot_auth(
-                target_kind=record.kind,
-                base_url=record.base_url,
-                task_token=task_token,
-                patient_id=patient_id,
-            )
-        except AutoMintError as exc:
-            store.close()
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"auto-mint of task token for {name!r} failed: {exc}\n"
-                    "Manual fallback: run `adversary debug mint-task-token "
-                    "--user-id you --patient-id "
-                    f"{patient_id.strip() or _AUTO_MINT_DEFAULT_PATIENT_ID} "
-                    "--remote-host root@<host> --bff-container copilot-bff` "
-                    "and paste the JWT into the Task token field."
-                ),
-            ) from exc
-        # Close the outer store used for resolve / auto-mint; the background
-        # task opens its own SqliteStore so the connection isn't shared
-        # across the request lifecycle and the per-scan task.
+        # Create the ScanJob FIRST so we can emit events during auto-mint
+        # and the early background steps. The user reported a "long pause"
+        # before any progress shows up; that pause is auto-mint plus the
+        # lazy litellm import inside make_provider. Both deserve their own
+        # visible events so the user sees motion the second the page loads.
         store.close()
-
         scan_id = _uuid.uuid4().hex[:12]
-        # The RedTeam currently produces up to 5 attacks per campaign
-        # (see CampaignBrief.max_attacks default in orchestrator.py). Used
-        # as the denominator for the progress bar; real count comes back
-        # via red_team_done events.
         expected_attacks = max_campaigns * 5
         job = ScanJob(
             id=scan_id,
@@ -912,9 +889,83 @@ def create_app() -> FastAPI:
         async def _progress_cb(kind: str, fields: dict[str, Any]) -> None:
             await job.emit(kind, fields)
 
+        # Emit a banner event before we even kick off auto-mint so the
+        # /scans/{id} page renders with content the moment it loads.
+        await job.emit(
+            "startup",
+            {
+                "step": "form_received",
+                "label": (
+                    f"Form received · target={record.name}, provider={provider}, "
+                    f"budget=${budget_usd:.2f}, campaigns={max_campaigns}"
+                ),
+            },
+        )
+
+        # Run auto-mint inline with explicit start/done events. For env-based
+        # signing this is millisecond-fast; for the SSH fallback path it can
+        # take 2-4s while the dashboard shells out to docker exec.
+        await job.emit(
+            "startup",
+            {
+                "step": "auto_mint_start",
+                "label": (
+                    "Resolving task token (env-signing if "
+                    "COPILOT_BFF_JWT_SIGNING_KEY is set, else SSH to BFF)…"
+                ),
+            },
+        )
+        try:
+            effective_task_token, effective_patient_id = await _resolve_copilot_auth(
+                target_kind=record.kind,
+                base_url=record.base_url,
+                task_token=task_token,
+                patient_id=patient_id,
+            )
+        except AutoMintError as exc:
+            await job.mark_done(
+                error=(
+                    f"auto-mint of task token for {name!r} failed: {exc}. "
+                    "Manual fallback: run `adversary debug mint-task-token "
+                    f"--user-id you --patient-id "
+                    f"{patient_id.strip() or _AUTO_MINT_DEFAULT_PATIENT_ID} "
+                    "--remote-host root@<host> --bff-container copilot-bff` "
+                    "and paste the JWT into the Task token field."
+                )
+            )
+            return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
+        await job.emit(
+            "startup",
+            {
+                "step": "auto_mint_done",
+                "label": (
+                    "Task token ready"
+                    if effective_task_token
+                    else "No task token needed for this target"
+                ),
+            },
+        )
+
         async def _run_in_background() -> None:
+            await job.emit(
+                "startup",
+                {
+                    "step": "background_start",
+                    "label": "Background scan task starting…",
+                },
+            )
             inner_store = _store()
             try:
+                await job.emit(
+                    "startup",
+                    {
+                        "step": "loading_provider",
+                        "label": (
+                            f"Loading {provider} provider (this triggers the "
+                            "litellm cold import on first use, ~1-2s)…"
+                        ),
+                    },
+                )
                 outcomes = await run_scan_for_target(
                     store=inner_store,
                     record=record,

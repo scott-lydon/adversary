@@ -323,7 +323,10 @@ class OrchestratorAgent:
                 attack_id=attack.attack_id,
                 n=attack_idx + 1,
                 of=len(red_queue),
-                preview=attack.prompt_sequence[0].text[:120]
+                # Full prompt text — the template wraps long lines instead of
+                # truncating, so we send everything. The 50-word cap in the
+                # red_team prompt keeps this bounded.
+                preview=attack.prompt_sequence[0].text
                 if attack.prompt_sequence
                 else "",
             )
@@ -336,7 +339,9 @@ class OrchestratorAgent:
                 campaign_id=campaign_id,
                 attack_id=attack.attack_id,
                 latency_ms=response.latency_ms,
-                response_preview=response.text[:140],
+                # Full response; the template wraps. Co-Pilot replies are
+                # already short JSON-shaped strings so this stays reasonable.
+                response_preview=response.text,
             )
             self.store.insert_attack(
                 attack.model_dump(), _utcnow(), target_id=self.target_id
