@@ -423,6 +423,38 @@ def create_app() -> FastAPI:
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
     # -----------------------------------------------------------------
+    # Liveness / readiness for the deploy host.
+    # -----------------------------------------------------------------
+    #
+    # GET /healthz returns 200 when the SqliteStore opens cleanly. The
+    # container HEALTHCHECK in deploy/Dockerfile and the upstream Caddy
+    # reverse proxy both depend on this; if it ever returns non-200,
+    # Docker marks the container unhealthy and Caddy starts returning 502.
+    #
+    # We deliberately do NOT call any LLM provider here. Provider failures
+    # are surfaced per-request from /scan and /replay, where they belong.
+
+    @app.get("/healthz", response_class=PlainTextResponse)
+    async def healthz() -> Any:
+        try:
+            store = _store()
+            store.head_hash()  # round-trip to the audit table
+            store.close()
+        except Exception as exc:
+            # Bubble the underlying message so `docker logs` and the
+            # Caddy access log point at the broken dependency immediately.
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "adversary dashboard not ready: SqliteStore failed to "
+                    f"open or query (error={type(exc).__name__}: {exc}). "
+                    "Check /data is writable inside the container and that "
+                    "/opt/adversary/data exists with mode 0755 on the host."
+                ),
+            ) from exc
+        return "ok"
+
+    # -----------------------------------------------------------------
     # Summary + drilldown cards
     # -----------------------------------------------------------------
 
