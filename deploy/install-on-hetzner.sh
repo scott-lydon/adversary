@@ -107,11 +107,12 @@ elif [[ ! -f "${ADV_ROOT}/.htpasswd-bcrypt" ]]; then
     printf '%s\n' "${HASH}" > "${ADV_ROOT}/.htpasswd-bcrypt"
 fi
 
-HASH=$(cat "${ADV_ROOT}/.htpasswd-bcrypt")
-[[ -n "${HASH}" ]] || die "${ADV_ROOT}/.htpasswd-bcrypt empty — delete it and re-run to regenerate"
+HASH=$(cat "${ADV_ROOT}/.htpasswd-bcrypt" 2>/dev/null || true)
 
-note "writing Caddy fragment with embedded bcrypt hash"
-# Escape the hash for sed: only $ and & need handling in replacement.
+note "writing Caddy fragment to ${CADDY_FRAGMENT_DST}"
+# The current source Caddyfile has no basic_auth placeholder, but the sed
+# remains so re-introducing a gate is one ADVERSARY_BASIC_AUTH_PLAINTEXT
+# rerun away. The substitution is a no-op when the placeholder is absent.
 HASH_ESC=$(printf '%s' "${HASH}" | sed -e 's/[\&|]/\\&/g')
 sed "s|{\$ADVERSARY_BASIC_AUTH_HASH}|${HASH_ESC}|g" \
     "${CADDY_FRAGMENT_SRC}" > "${CADDY_FRAGMENT_DST}.tmp"

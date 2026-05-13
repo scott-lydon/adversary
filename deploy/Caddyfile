@@ -15,16 +15,15 @@ adversary.5-161-253-237.sslip.io {
 
     encode zstd gzip
 
-    # Basic-Auth gate. The hash below is for the password the deploy
-    # script generates (see /opt/adversary/.htpasswd-source for the
-    # plaintext written once and chmod 600 immediately).
+    # No Basic-Auth gate. Intentional: graders need frictionless access
+    # and Safari (and some other browsers) re-prompted the auth dialog
+    # on every internal navigation, which made the dashboard unusable.
+    # /audit/tamper* is still firewalled below so the most destructive
+    # endpoint is not reachable through the proxy. To re-add a gate:
     #
-    # Regenerate with:
-    #   caddy hash-password --plaintext '<new password>'
-    # then replace the hash here and restart caddy.
-    basic_auth {
-        admin {$ADVERSARY_BASIC_AUTH_HASH}
-    }
+    #   basic_auth {
+    #       admin <bcrypt-hash-from `caddy hash-password`>
+    #   }
 
     reverse_proxy 127.0.0.1:8765 {
         header_up X-Real-IP {remote_host}
