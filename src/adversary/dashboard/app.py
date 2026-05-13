@@ -1618,6 +1618,25 @@ def create_app() -> FastAPI:
                 subcategory_key = r["payload"].get("subcategory", "")
                 break
 
+        # Real cost / latency / verdict mix for this specific campaign.
+        # The orchestrator's agent_runs row is a placeholder (cost=0,
+        # latency=0) so the page header used to show $0.0000 / 0 ms for
+        # every campaign even when the campaign actually spent money.
+        breakdown = store.campaign_breakdown(campaign_id)
+        latency_ms: int | None = None
+        if breakdown["started_at"] and breakdown["ended_at"]:
+            try:
+                from datetime import datetime
+                t0 = datetime.fromisoformat(breakdown["started_at"])
+                t1 = datetime.fromisoformat(breakdown["ended_at"])
+                latency_ms = max(0, int((t1 - t0).total_seconds() * 1000))
+            except ValueError as exc:
+                raise ValueError(
+                    f"campaign_detail: cannot parse occurred_at "
+                    f"timestamps for campaign {campaign_id}: {exc}. "
+                    "Audit rows must use ISO-8601 UTC."
+                ) from exc
+
         ctx = _common_context(store)
         store.close()
         return templates.TemplateResponse(
@@ -1629,6 +1648,8 @@ def create_app() -> FastAPI:
                 "audit_rows": audit_rows,
                 "category_key": category_key,
                 "subcategory_key": subcategory_key,
+                "breakdown": breakdown,
+                "latency_ms": latency_ms,
                 **ctx,
             },
         )
@@ -1771,59 +1792,13 @@ def create_app() -> FastAPI:
 
     @app.get("/cost", response_class=HTMLResponse)
     async def cost(request: Request) -> Any:
+        # Single source of truth lives in store.cost_breakdown() so the
+        # /cost page and the summary card on / never disagree. See
+        # storage/store.py for the rationale (three tables hold spend).
         store = _store()
-        rows = [
-            dict(r)
-            for r in store.conn.execute(
-                "SELECT agent, "
-                "SUM(dollar_cost) as dollar_cost, "
-                "SUM(tokens_in) as tokens_in, "
-                "SUM(tokens_out) as tokens_out, "
-                "COUNT(*) as runs "
-                "FROM agent_runs GROUP BY agent ORDER BY dollar_cost DESC"
-            ).fetchall()
-        ]
-        # Also pull per-attack generation cost from generation_metadata
-        # and per-verdict cost so the chart reflects more than just
-        # agent_runs (which orchestrator currently leaves at $0).
-        for r in store.conn.execute(
-            "SELECT generation_metadata_json FROM attacks"
-        ).fetchall():
-            md = _parse_payload(r["generation_metadata_json"])
-            rt = next((x for x in rows if x["agent"] == "red_team"), None)
-            if rt is None:
-                rt = {
-                    "agent": "red_team",
-                    "dollar_cost": 0.0,
-                    "tokens_in": 0,
-                    "tokens_out": 0,
-                    "runs": 0,
-                }
-                rows.append(rt)
-            rt["dollar_cost"] = (rt["dollar_cost"] or 0.0) + float(
-                md.get("dollar_cost", 0.0)
-            )
-            rt["tokens_in"] = (rt["tokens_in"] or 0) + int(md.get("tokens_in", 0))
-            rt["tokens_out"] = (rt["tokens_out"] or 0) + int(md.get("tokens_out", 0))
-        for r in store.conn.execute(
-            "SELECT dollar_cost FROM verdicts"
-        ).fetchall():
-            judge = next((x for x in rows if x["agent"] == "judge"), None)
-            if judge is None:
-                judge = {
-                    "agent": "judge",
-                    "dollar_cost": 0.0,
-                    "tokens_in": 0,
-                    "tokens_out": 0,
-                    "runs": 0,
-                }
-                rows.append(judge)
-            judge["dollar_cost"] = (judge["dollar_cost"] or 0.0) + float(
-                r["dollar_cost"] or 0.0
-            )
-
-        rows.sort(key=lambda x: -(x.get("dollar_cost") or 0.0))
-        total = sum(r["dollar_cost"] or 0.0 for r in rows)
+        breakdown = store.cost_breakdown()
+        rows = breakdown["rows"]
+        total = breakdown["total_dollar_cost"]
         ctx = _common_context(store)
         store.close()
         return templates.TemplateResponse(
@@ -1927,7 +1902,12 @@ def create_app() -> FastAPI:
 # ---------------------------------------------------------------------
 
 def _narrative_for_audit(row: dict[str, Any]) -> str:
-    """One-line "what happened" rendering of an audit row's payload."""
+    """One-line "what happened" rendering of an audit row's payload.
+
+    NOTE: every new audit row written by an agent should also get a case
+    here, otherwise the campaign timeline falls back to the cryptic
+    "agent.action" form. Bug-prevention checklist entry T1 covers this.
+    """
     agent = row["agent"]
     action = row["action"]
     payload = row.get("payload", {}) or {}
@@ -1935,6 +1915,23 @@ def _narrative_for_audit(row: dict[str, Any]) -> str:
         cat = payload.get("category", "?")
         sub = payload.get("subcategory", "?")
         return f"Orchestrator launched a {cat} / {sub} campaign."
+    if agent == "orchestrator" and action == "campaign_done":
+        s = payload.get("successes", 0)
+        p = payload.get("partials", 0)
+        f = payload.get("fails", 0)
+        cost = payload.get("dollar_cost", 0.0)
+        return (
+            f"Orchestrator closed campaign — success={s} partial={p} "
+            f"fail={f} cost=${float(cost):.4f}."
+        )
+    if agent == "red_team" and action == "attack_generated":
+        aid = payload.get("attack_id", "?")
+        model = payload.get("model", "?")
+        cost = payload.get("dollar_cost", 0.0)
+        return (
+            f"Red Team generated {aid} via {model} for "
+            f"${float(cost):.6f}."
+        )
     if agent == "target_adapter" and action == "response":
         aid = payload.get("attack_id", "?")
         return f"Target returned a response for {aid}."

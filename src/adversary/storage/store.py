@@ -487,6 +487,54 @@ class SqliteStore:
         )
         self.conn.commit()
 
+    def update_agent_run_totals(
+        self,
+        *,
+        agent: str,
+        session_id: str,
+        dollar_cost: float,
+        latency_ms: int,
+        tokens_in: int,
+        tokens_out: int,
+        model: str | None = None,
+    ) -> None:
+        """Roll up the actual cost/latency/token totals onto an existing
+        agent_runs row at the end of a campaign.
+
+        The orchestrator inserts a placeholder row at campaign_start with
+        zeroes (because it does not yet know how much red_team + judge work
+        will cost). Calling this at campaign_done is what makes the
+        per-campaign Cost column on /campaigns and the per-campaign header
+        on /campaigns/{id} reflect reality instead of $0.
+
+        Raises ValueError if the row does not exist — silently no-op'ing
+        would hide a wiring regression behind a $0 card later.
+        """
+        cur = self.conn.execute(
+            "UPDATE agent_runs SET "
+            "dollar_cost=?, latency_ms=?, tokens_in=?, tokens_out=?, "
+            "model=COALESCE(?, model) "
+            "WHERE agent=? AND session_id=?",
+            (
+                float(dollar_cost),
+                int(latency_ms),
+                int(tokens_in),
+                int(tokens_out),
+                model,
+                agent,
+                session_id,
+            ),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(
+                f"update_agent_run_totals: no agent_runs row for "
+                f"agent={agent!r} session_id={session_id!r}. "
+                "Did the campaign_start placeholder fail to insert? "
+                "Check the call order in orchestrator.run_campaign — "
+                "insert_agent_run must run before this UPDATE."
+            )
+        self.conn.commit()
+
     def insert_agent_message(self, msg: dict[str, Any]) -> None:
         self.conn.execute(
             "INSERT INTO agent_messages "
@@ -649,6 +697,116 @@ class SqliteStore:
 
     # --- summaries -------------------------------------------------------
 
+    # Cost lives in three different tables for three different reasons:
+    #   * agent_runs.dollar_cost: per-agent rollup, currently only populated
+    #     by the orchestrator (as a placeholder at campaign_start, then
+    #     overwritten by update_agent_run_totals at campaign_done).
+    #   * attacks.generation_metadata_json.dollar_cost: per-attack billing
+    #     from the Red Team LLM call that produced the attack.
+    #   * verdicts.dollar_cost: per-verdict billing from the Judge LLM call.
+    #
+    # Any dashboard surface that wants "real spend" MUST aggregate all three
+    # or it will silently undercount. Until 2026-05-13 the summary card on /
+    # only queried agent_runs and so always reported $0.0000. The helper
+    # below is the single source of truth that both the summary card and
+    # the /cost page use; bug-prevention checklist entry C1 ("Cost shown
+    # on the dashboard must equal the sum across all three cost-bearing
+    # tables") relies on it.
+    def cost_breakdown(
+        self, *, campaign_id: str | None = None
+    ) -> dict[str, Any]:
+        """Compute cost rolled up per agent.
+
+        When ``campaign_id`` is given, the totals only count attacks /
+        verdicts / agent_runs belonging to that campaign. Otherwise all
+        rows in the database are aggregated.
+        """
+        rows: dict[str, dict[str, Any]] = {}
+
+        def bucket(agent: str) -> dict[str, Any]:
+            return rows.setdefault(
+                agent,
+                {
+                    "agent": agent,
+                    "dollar_cost": 0.0,
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "runs": 0,
+                },
+            )
+
+        # agent_runs: orchestrator + (future) any agent we start logging.
+        if campaign_id is None:
+            ar_iter = self.conn.execute(
+                "SELECT agent, "
+                "COALESCE(SUM(dollar_cost), 0.0) AS dollar_cost, "
+                "COALESCE(SUM(tokens_in), 0) AS tokens_in, "
+                "COALESCE(SUM(tokens_out), 0) AS tokens_out, "
+                "COUNT(*) AS runs "
+                "FROM agent_runs GROUP BY agent"
+            )
+        else:
+            ar_iter = self.conn.execute(
+                "SELECT agent, "
+                "COALESCE(SUM(dollar_cost), 0.0) AS dollar_cost, "
+                "COALESCE(SUM(tokens_in), 0) AS tokens_in, "
+                "COALESCE(SUM(tokens_out), 0) AS tokens_out, "
+                "COUNT(*) AS runs "
+                "FROM agent_runs WHERE session_id=? GROUP BY agent",
+                (campaign_id,),
+            )
+        for r in ar_iter:
+            b = bucket(r["agent"])
+            b["dollar_cost"] += float(r["dollar_cost"] or 0.0)
+            b["tokens_in"] += int(r["tokens_in"] or 0)
+            b["tokens_out"] += int(r["tokens_out"] or 0)
+            b["runs"] += int(r["runs"] or 0)
+
+        # attacks: per-attack red_team cost lives inside generation_metadata.
+        if campaign_id is None:
+            atk_iter = self.conn.execute(
+                "SELECT generation_metadata_json FROM attacks"
+            )
+        else:
+            atk_iter = self.conn.execute(
+                "SELECT generation_metadata_json FROM attacks "
+                "WHERE attack_id LIKE ?",
+                (f"{campaign_id}%",),
+            )
+        rt = bucket("red_team")
+        for r in atk_iter:
+            try:
+                md = json.loads(r["generation_metadata_json"] or "{}")
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"cost_breakdown: attack row has malformed "
+                    f"generation_metadata_json: {exc}. Re-run the campaign "
+                    "after fixing the writer (red_team agent)."
+                ) from exc
+            rt["dollar_cost"] += float(md.get("dollar_cost") or 0.0)
+            rt["tokens_in"] += int(md.get("tokens_in") or 0)
+            rt["tokens_out"] += int(md.get("tokens_out") or 0)
+            rt["runs"] += 1
+
+        # verdicts: per-verdict judge cost.
+        if campaign_id is None:
+            v_iter = self.conn.execute(
+                "SELECT dollar_cost FROM verdicts"
+            )
+        else:
+            v_iter = self.conn.execute(
+                "SELECT dollar_cost FROM verdicts WHERE attack_id LIKE ?",
+                (f"{campaign_id}%",),
+            )
+        judge = bucket("judge")
+        for r in v_iter:
+            judge["dollar_cost"] += float(r["dollar_cost"] or 0.0)
+            judge["runs"] += 1
+
+        out = sorted(rows.values(), key=lambda x: -x["dollar_cost"])
+        total = sum(r["dollar_cost"] for r in out)
+        return {"rows": out, "total_dollar_cost": float(total)}
+
     def summary(self) -> dict[str, Any]:
         def scalar(sql: str, params: tuple[Any, ...] = ()) -> Any:
             row = self.conn.execute(sql, params).fetchone()
@@ -668,7 +826,7 @@ class SqliteStore:
         ):
             findings_by_severity[row["severity"]] = int(row["c"])
 
-        total_cost = scalar("SELECT COALESCE(SUM(dollar_cost), 0.0) FROM agent_runs")
+        total_cost = self.cost_breakdown()["total_dollar_cost"]
         head_hash = self.head_hash()
         audit_rows = scalar("SELECT COUNT(*) FROM audit_log")
         targets_total = scalar("SELECT COUNT(*) FROM targets")
@@ -681,4 +839,78 @@ class SqliteStore:
             "audit_head_hash": head_hash,
             "audit_rows": int(audit_rows),
             "targets_total": int(targets_total),
+        }
+
+    def campaign_breakdown(self, campaign_id: str) -> dict[str, Any]:
+        """Per-campaign cost / latency / verdict mix / attack count.
+
+        Used by /campaigns/{id} so the page header shows real numbers
+        instead of the always-zero agent_runs placeholder.
+        """
+        cost = self.cost_breakdown(campaign_id=campaign_id)
+        attacks_total = self.conn.execute(
+            "SELECT COUNT(*) FROM attacks WHERE attack_id LIKE ?",
+            (f"{campaign_id}%",),
+        ).fetchone()[0]
+        verdict_mix = {"success": 0, "partial": 0, "fail": 0}
+        for r in self.conn.execute(
+            "SELECT verdict, COUNT(*) c FROM verdicts "
+            "WHERE attack_id LIKE ? GROUP BY verdict",
+            (f"{campaign_id}%",),
+        ):
+            verdict_mix[r["verdict"]] = int(r["c"])
+
+        # Latency = wall time from campaign_start audit row to the latest
+        # audit row touching any attack in this campaign. Beats the
+        # orchestrator's per-call latency_ms which is always 0 for the
+        # placeholder agent_run.
+        started_at_row = self.conn.execute(
+            "SELECT occurred_at FROM audit_log "
+            "WHERE agent='orchestrator' AND action='campaign_start' "
+            "AND payload_json LIKE ? "
+            "ORDER BY rowid_seq ASC LIMIT 1",
+            (f'%"{campaign_id}"%',),
+        ).fetchone()
+        ended_at_row = self.conn.execute(
+            "SELECT occurred_at FROM audit_log "
+            "WHERE payload_json LIKE ? "
+            "ORDER BY rowid_seq DESC LIMIT 1",
+            (f"%{campaign_id}%",),
+        ).fetchone()
+        started_at = started_at_row["occurred_at"] if started_at_row else None
+        ended_at = ended_at_row["occurred_at"] if ended_at_row else None
+
+        # Models: red_team model + judge model from per-row payloads, so
+        # the campaign header is concrete instead of "live".
+        rt_models: set[str] = set()
+        for r in self.conn.execute(
+            "SELECT generation_metadata_json FROM attacks "
+            "WHERE attack_id LIKE ?",
+            (f"{campaign_id}%",),
+        ):
+            try:
+                md = json.loads(r["generation_metadata_json"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            m = md.get("model")
+            if m:
+                rt_models.add(str(m))
+        judge_models: set[str] = set()
+        for r in self.conn.execute(
+            "SELECT judge_model FROM verdicts WHERE attack_id LIKE ?",
+            (f"{campaign_id}%",),
+        ):
+            if r["judge_model"]:
+                judge_models.add(str(r["judge_model"]))
+
+        return {
+            "campaign_id": campaign_id,
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "attacks_total": int(attacks_total),
+            "verdict_mix": verdict_mix,
+            "cost_rows": cost["rows"],
+            "total_dollar_cost": cost["total_dollar_cost"],
+            "red_team_models": sorted(rt_models),
+            "judge_models": sorted(judge_models),
         }
