@@ -1,0 +1,63 @@
+# Adversary deployment stack for the Hetzner box.
+#
+# Layout on the host (created by deploy/install-on-hetzner.sh):
+#   /opt/adversary/                <- repo checkout (this docker-compose lives in deploy/)
+#   /opt/adversary/.env            <- mode 0600, holds OPENAI/TOGETHER/ANTHROPIC keys
+#   /opt/adversary/data/           <- SqliteStore lives here; bind-mounted to /data
+#   /opt/adversary/secret/         <- Fernet key file; bind-mounted to /root/.config/adversary
+#   /opt/adversary/regress/        <- regression JSON snapshots; bind-mounted to /app/evals
+#
+# Bring up:    docker compose -f /opt/adversary/deploy/docker-compose.yml up -d --build
+# Tear down:   docker compose -f /opt/adversary/deploy/docker-compose.yml down
+# Logs:        docker compose -f /opt/adversary/deploy/docker-compose.yml logs -f adversary
+#
+# Caddy on the host reverse-proxies https://adversary.5-161-253-237.sslip.io
+# to 127.0.0.1:8765 (see deploy/Caddyfile).
+
+name: adversary
+
+services:
+  adversary:
+    build:
+      context: ..                # repo root, so the Dockerfile sees pyproject + src
+      dockerfile: deploy/Dockerfile
+    image: adversary:latest
+    container_name: adversary
+    restart: unless-stopped
+
+    # Bind ONLY to localhost on the host. Public traffic must come through
+    # Caddy on 443. This is the single line that decides whether the
+    # dashboard is internet-facing; flipping it to 0.0.0.0:8765:8765 would
+    # bypass TLS + auth.
+    ports:
+      - "127.0.0.1:8765:8765"
+
+    env_file:
+      - /opt/adversary/.env
+
+    # Allow the Target Adapter to reach the OpenEMR + Co-Pilot services
+    # by their published host ports. Using `host.docker.internal` keeps
+    # the adapter URL identical to what works from a developer Mac and
+    # avoids tying us to the openemr_default network's exact name.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    volumes:
+      # adversary.db lives here so a `docker compose down && up` does NOT
+      # wipe campaign history, audit log, or registered targets.
+      - /opt/adversary/data:/data
+      # Fernet key for credential encryption; survives container rebuilds.
+      - /opt/adversary/secret:/root/.config/adversary
+      # Regression JSON snapshots so confirmed exploits keep replaying
+      # against future deploys of the target.
+      - /opt/adversary/regress:/app/evals/regression
+
+    # Adversary uses asyncio extensively; the default 64MB shm is fine,
+    # but bump if we add Playwright or another browser-based target later.
+    # shm_size: 256mb
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

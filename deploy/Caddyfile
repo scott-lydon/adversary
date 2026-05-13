@@ -1,0 +1,45 @@
+# Caddyfile fragment for the Adversary dashboard.
+#
+# Installed at /etc/caddy/Caddyfile.d/adversary.caddy on the Hetzner host
+# (or appended to /etc/caddy/Caddyfile if the import directive is not
+# present in the main file). Caddy auto-reload picks the change up.
+#
+# Why sslip.io: any *.<dashed-ip>.sslip.io resolves to that IP without DNS
+# setup, so we get a real Let's Encrypt cert with zero domain ownership
+# friction. Swap the hostname when a real domain is added.
+
+adversary.5-161-253-237.sslip.io {
+    # Caddy's auto-HTTPS issues a Let's Encrypt cert for this hostname on
+    # first request. ACME HTTP-01 succeeds because Caddy listens on 80
+    # and 443 and sslip.io resolves to this box.
+
+    encode zstd gzip
+
+    # Basic-Auth gate. The hash below is for the password the deploy
+    # script generates (see /opt/adversary/.htpasswd-source for the
+    # plaintext written once and chmod 600 immediately).
+    #
+    # Regenerate with:
+    #   caddy hash-password --plaintext '<new password>'
+    # then replace the hash here and restart caddy.
+    basic_auth {
+        admin {$ADVERSARY_BASIC_AUTH_HASH}
+    }
+
+    reverse_proxy 127.0.0.1:8765 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        # Long-running /scan POSTs can take >60s while the orchestrator
+        # waits on the Red Team LLM. Raise the upstream read timeout so
+        # Caddy does not 504 mid-campaign.
+        transport http {
+            read_timeout 5m
+            write_timeout 5m
+        }
+    }
+
+    # Lock down the audit-tamper endpoint to localhost only; it lets you
+    # rewrite history and must never be reachable through the proxy.
+    @forbidden path /audit/tamper*
+    respond @forbidden 403
+}
