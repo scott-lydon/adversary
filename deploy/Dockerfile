@@ -22,12 +22,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 #   `asyncpg` wheels when no manylinux wheel matches.
 #   curl is for the HEALTHCHECK below.
 #   ca-certificates is required for outbound HTTPS to the LLM providers.
+#   openssh-client is required by the dashboard's auto-mint helper, which
+#   shells out to `ssh <host> docker exec <bff> adversary debug mint-task-token`
+#   so the Clinical Co-Pilot's JWT signing key never has to leave the BFF
+#   container. Without ssh, the scan form errors with
+#   "auto-mint failed: `ssh` binary not found in PATH".
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         build-essential \
         libffi-dev \
         curl \
         ca-certificates \
+        openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
