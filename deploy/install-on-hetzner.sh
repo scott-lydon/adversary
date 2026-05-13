@@ -77,29 +77,30 @@ if ! grep -q 'Caddyfile.d/\*\.caddy' "${CADDY_MAIN}"; then
 fi
 
 # Generate and persist the basic-auth password if it does not already exist.
-# Plaintext is written once to /opt/adversary/.htpasswd-source (mode 600);
-# the bcrypt hash is exported to /etc/caddy/adversary.env which Caddy reads.
-if [[ ! -f "${ADV_ROOT}/.htpasswd-source" ]]; then
-    note "generating dashboard password (saved to ${ADV_ROOT}/.htpasswd-source mode 600)"
+# Plaintext is written once to /opt/adversary/.htpasswd-source (mode 600).
+# The bcrypt hash is sed-substituted into the installed Caddyfile fragment
+# (NOT env-var-expanded, because `caddy validate` runs without the systemd
+# EnvironmentFile and would see an empty placeholder).
+if [[ ! -f "${ADV_ROOT}/.htpasswd-bcrypt" ]]; then
+    note "generating dashboard password (plaintext: ${ADV_ROOT}/.htpasswd-source, bcrypt: ${ADV_ROOT}/.htpasswd-bcrypt; both 0600)"
     PLAINTEXT=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
-    echo "${PLAINTEXT}" > "${ADV_ROOT}/.htpasswd-source"
-    chmod 600 "${ADV_ROOT}/.htpasswd-source"
+    install -m 0600 /dev/null "${ADV_ROOT}/.htpasswd-source"
+    printf '%s\n' "${PLAINTEXT}" > "${ADV_ROOT}/.htpasswd-source"
     HASH=$(caddy hash-password --plaintext "${PLAINTEXT}")
-    echo "ADVERSARY_BASIC_AUTH_HASH=${HASH}" > /etc/caddy/adversary.env
-    chmod 640 /etc/caddy/adversary.env
-    chgrp caddy /etc/caddy/adversary.env || true
+    install -m 0600 /dev/null "${ADV_ROOT}/.htpasswd-bcrypt"
+    printf '%s\n' "${HASH}" > "${ADV_ROOT}/.htpasswd-bcrypt"
 fi
 
-# Ensure systemd unit reads the env file with the bcrypt hash.
-if ! systemctl cat caddy 2>/dev/null | grep -q '/etc/caddy/adversary.env'; then
-    note "patching caddy systemd unit to source /etc/caddy/adversary.env"
-    install -d -m 0755 /etc/systemd/system/caddy.service.d
-    cat > /etc/systemd/system/caddy.service.d/override.conf <<EOF
-[Service]
-EnvironmentFile=/etc/caddy/adversary.env
-EOF
-    systemctl daemon-reload
-fi
+HASH=$(cat "${ADV_ROOT}/.htpasswd-bcrypt")
+[[ -n "${HASH}" ]] || die "${ADV_ROOT}/.htpasswd-bcrypt empty — delete it and re-run to regenerate"
+
+note "writing Caddy fragment with embedded bcrypt hash"
+# Escape the hash for sed: only $ and & need handling in replacement.
+HASH_ESC=$(printf '%s' "${HASH}" | sed -e 's/[\&|]/\\&/g')
+sed "s|{\$ADVERSARY_BASIC_AUTH_HASH}|${HASH_ESC}|g" \
+    "${CADDY_FRAGMENT_SRC}" > "${CADDY_FRAGMENT_DST}.tmp"
+chmod 0644 "${CADDY_FRAGMENT_DST}.tmp"
+mv "${CADDY_FRAGMENT_DST}.tmp" "${CADDY_FRAGMENT_DST}"
 
 note "validating Caddyfile"
 caddy validate --config "${CADDY_MAIN}" --adapter caddyfile
