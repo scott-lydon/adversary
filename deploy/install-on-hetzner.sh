@@ -127,6 +127,35 @@ systemctl enable --now caddy
 systemctl restart caddy
 
 # ---------------------------------------------------------------------------
+# Inject COPILOT_BFF_JWT_SIGNING_KEY into the adversary .env so the
+# dashboard's auto-mint can sign tokens locally instead of shelling out to
+# `ssh <host> docker exec copilot-bff …`. The ssh fallback fails inside the
+# container ("Host key verification failed") unless we mount the host's
+# known_hosts and SSH key, which is more surface area than necessary.
+#
+# The signing key already lives in the copilot-bff container; we pull it
+# out and append (or update) it in /opt/adversary/.env. Idempotent.
+# ---------------------------------------------------------------------------
+
+if docker ps --format '{{.Names}}' | grep -qx copilot-bff; then
+    note "reading COPILOT_BFF_JWT_SIGNING_KEY from copilot-bff and writing it into ${ADV_ROOT}/.env"
+    SIGNING_KEY=$(docker exec copilot-bff sh -c 'printenv COPILOT_BFF_JWT_SIGNING_KEY' 2>/dev/null || true)
+    if [[ -z "${SIGNING_KEY}" ]]; then
+        echo "WARNING: copilot-bff is running but has no COPILOT_BFF_JWT_SIGNING_KEY in env." >&2
+        echo "  Dashboard auto-mint will fall back to SSH and will fail unless host keys are mounted." >&2
+    else
+        if grep -q '^COPILOT_BFF_JWT_SIGNING_KEY=' "${ADV_ROOT}/.env"; then
+            sed -i "s|^COPILOT_BFF_JWT_SIGNING_KEY=.*|COPILOT_BFF_JWT_SIGNING_KEY=${SIGNING_KEY}|" "${ADV_ROOT}/.env"
+        else
+            echo "COPILOT_BFF_JWT_SIGNING_KEY=${SIGNING_KEY}" >> "${ADV_ROOT}/.env"
+        fi
+        chmod 0600 "${ADV_ROOT}/.env"
+    fi
+else
+    note "copilot-bff not running yet — skipping signing-key injection (re-run install-on-hetzner.sh after the Co-Pilot stack is up to enable env-based auto-mint)"
+fi
+
+# ---------------------------------------------------------------------------
 # Adversary container
 # ---------------------------------------------------------------------------
 
