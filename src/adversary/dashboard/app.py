@@ -12,13 +12,21 @@ import asyncio
 import json
 import os
 import time as _time_module
+import uuid as _uuid
 from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.templating import Jinja2Templates
 
 from adversary.categories import (
@@ -62,6 +70,75 @@ _AGENT_ORDER: tuple[str, ...] = (
 
 def _store() -> SqliteStore:
     return SqliteStore("adversary.db")
+
+
+# --- live scan job registry --------------------------------------------------
+#
+# POST /targets/{name}/scan no longer blocks the request thread for the
+# duration of a live LLM scan (which can be 30-120s). Instead it spawns an
+# asyncio.create_task and redirects to /scans/{scan_id}; the page subscribes
+# to /scans/{scan_id}/events via Server-Sent Events and renders per-agent
+# progress as the orchestrator fires its progress_callback.
+#
+# Storage is process-local. The dashboard is a single-process FastAPI app
+# bound to 127.0.0.1, so a dict is sufficient and dodges Redis / sqlite-pub-sub
+# entirely. Jobs hang around for SCAN_JOB_TTL_S after they finish so a slow
+# tab reload still gets the terminal event; older entries are pruned lazily.
+SCAN_JOB_TTL_S = 3600  # 1h is generous; covers a grader stepping away.
+
+
+@dataclass
+class ScanJob:
+    """One live scan kicked off by the dashboard.
+
+    The orchestrator pushes events via ``ScanJob.emit``; ``ScanJob.stream``
+    is an async generator the SSE endpoint pulls from. Both sides
+    coordinate via ``asyncio.Condition`` so a reader blocks cheaply between
+    events instead of polling.
+    """
+
+    id: str
+    target_name: str
+    target_id: str | None
+    expected_attacks: int
+    provider: str
+    started_at: datetime
+    events: list[dict[str, Any]] = field(default_factory=list)
+    cond: asyncio.Condition = field(default_factory=asyncio.Condition)
+    done: bool = False
+    error: str | None = None
+    result_url: str | None = None
+
+    async def emit(self, kind: str, fields: dict[str, Any]) -> None:
+        async with self.cond:
+            ev = {"kind": kind, "ts": _time_module.time(), **fields}
+            self.events.append(ev)
+            self.cond.notify_all()
+
+    async def mark_done(
+        self, *, result_url: str | None = None, error: str | None = None
+    ) -> None:
+        async with self.cond:
+            self.done = True
+            self.result_url = result_url
+            self.error = error
+            self.cond.notify_all()
+
+
+_SCANS: dict[str, ScanJob] = {}
+
+
+def _prune_scan_jobs() -> None:
+    """Drop finished scans older than SCAN_JOB_TTL_S. Cheap to call from any
+    route that touches the registry."""
+    now = _time_module.time()
+    stale = [
+        sid
+        for sid, job in _SCANS.items()
+        if job.done and (now - job.started_at.timestamp()) > SCAN_JOB_TTL_S
+    ]
+    for sid in stale:
+        _SCANS.pop(sid, None)
 
 
 def _campaign_id_for_attack(attack_id: str) -> str:
@@ -421,6 +498,23 @@ def create_app() -> FastAPI:
     """Build and return a configured FastAPI application."""
     app = FastAPI(title="Adversary Dashboard")
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+    # Filter: wrap a timestamp string (or datetime) into a <time
+    # class="user-tz"> so the client-side script in _base.html re-renders it
+    # in the viewer's locale + timezone. Returns Markup so Jinja does not
+    # double-escape the angle brackets. Empty / falsy values pass through
+    # as a literal em-dash so tables stay aligned.
+    from markupsafe import Markup, escape as _esc
+
+    def _local_time(value: Any) -> str:
+        if not value:
+            return "—"
+        text = value.isoformat() if hasattr(value, "isoformat") else str(value)
+        return Markup(
+            f'<time class="user-tz" datetime="{_esc(text)}">{_esc(text)}</time>'
+        )
+
+    templates.env.filters["local_time"] = _local_time
 
     # -----------------------------------------------------------------
     # Liveness / readiness for the deploy host.
@@ -793,51 +887,173 @@ def create_app() -> FastAPI:
                     "and paste the JWT into the Task token field."
                 ),
             ) from exc
-        try:
-            outcomes = await run_scan_for_target(
-                store=store,
-                record=record,
-                budget_usd=budget_usd,
-                max_campaigns=max_campaigns,
-                provider_name=provider,
-                seed=seed_int,
-                task_token=effective_task_token,
-                patient_id=effective_patient_id,
-                reports_dir=Path("vulnerability-reports"),
-            )
-        except TargetNotAllowlisted as exc:
-            store.close()
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except ProviderUnavailable as exc:
-            store.close()
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except ValueError as exc:
-            store.close()
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"could not start scan against {name!r}: {exc}. "
-                    "For the clinical_copilot kind you usually need a "
-                    "non-empty task_token and patient_id."
-                ),
-            ) from exc
-        except RunnerError as exc:
-            store.close()
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        finally:
-            # store stays open through run_scan_for_target; close here
-            # only if exceptions skipped the normal path.
-            pass
-
-        total_attacks = sum(o.attacks_run for o in outcomes)
-        total_success = sum(o.successes for o in outcomes)
+        # Close the outer store used for resolve / auto-mint; the background
+        # task opens its own SqliteStore so the connection isn't shared
+        # across the request lifecycle and the per-scan task.
         store.close()
-        return RedirectResponse(
-            url=(
-                f"/campaigns?target={name}&scanned=ok"
-                f"&attacks={total_attacks}&exploits={total_success}"
-            ),
-            status_code=303,
+
+        scan_id = _uuid.uuid4().hex[:12]
+        # The RedTeam currently produces up to 5 attacks per campaign
+        # (see CampaignBrief.max_attacks default in orchestrator.py). Used
+        # as the denominator for the progress bar; real count comes back
+        # via red_team_done events.
+        expected_attacks = max_campaigns * 5
+        job = ScanJob(
+            id=scan_id,
+            target_name=record.name,
+            target_id=record.id,
+            expected_attacks=expected_attacks,
+            provider=provider,
+            started_at=datetime.now(timezone.utc),
+        )
+        _SCANS[scan_id] = job
+        _prune_scan_jobs()
+
+        async def _progress_cb(kind: str, fields: dict[str, Any]) -> None:
+            await job.emit(kind, fields)
+
+        async def _run_in_background() -> None:
+            inner_store = _store()
+            try:
+                outcomes = await run_scan_for_target(
+                    store=inner_store,
+                    record=record,
+                    budget_usd=budget_usd,
+                    max_campaigns=max_campaigns,
+                    provider_name=provider,
+                    seed=seed_int,
+                    task_token=effective_task_token,
+                    patient_id=effective_patient_id,
+                    reports_dir=Path("vulnerability-reports"),
+                    progress_callback=_progress_cb,
+                )
+                total_attacks = sum(o.attacks_run for o in outcomes)
+                total_success = sum(o.successes for o in outcomes)
+                total_cost = sum(o.dollar_cost for o in outcomes)
+                # The dashboard already renders /campaigns nicely; keep the
+                # same query-string shape the old sync redirect used so any
+                # bookmark / cohort handout that pasted the URL still works.
+                result_url = (
+                    f"/campaigns?target={record.name}&scanned=ok"
+                    f"&attacks={total_attacks}&exploits={total_success}"
+                )
+                await job.emit(
+                    "scan_done",
+                    {
+                        "attacks": total_attacks,
+                        "exploits": total_success,
+                        "dollar_cost": total_cost,
+                        "campaigns": len(outcomes),
+                    },
+                )
+                await job.mark_done(result_url=result_url)
+            except TargetNotAllowlisted as exc:
+                await job.mark_done(error=f"target not allowlisted: {exc}")
+            except ProviderUnavailable as exc:
+                await job.mark_done(error=f"provider unavailable: {exc}")
+            except ValueError as exc:
+                await job.mark_done(
+                    error=(
+                        f"could not start scan against {record.name!r}: {exc}. "
+                        "For clinical_copilot you usually need a non-empty "
+                        "task_token and patient_id."
+                    )
+                )
+            except RunnerError as exc:
+                await job.mark_done(error=f"runner error: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                # Any other crash is surfaced verbatim in the UI; the user
+                # sees the type+message and can re-mint a token or refile a
+                # bug. Stash full traceback for the server log too.
+                import traceback
+
+                tb = traceback.format_exc()
+                await job.emit("server_traceback", {"traceback": tb})
+                await job.mark_done(
+                    error=f"{type(exc).__name__}: {exc}"
+                )
+            finally:
+                inner_store.close()
+
+        asyncio.create_task(_run_in_background())
+        return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
+
+    @app.get("/scans/{scan_id}", response_class=HTMLResponse)
+    async def scan_progress(request: Request, scan_id: str) -> Any:
+        job = _SCANS.get(scan_id)
+        if job is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no scan with id {scan_id!r} in this process. The job "
+                    "may have expired (TTL is 1 hour) or the dashboard was "
+                    "restarted after launch. Re-submit the form."
+                ),
+            )
+        return templates.TemplateResponse(
+            request=request,
+            name="scan_progress.html",
+            context={
+                "scan_id": scan_id,
+                "target_name": job.target_name,
+                "target_id": job.target_name,  # routes use name as the slug
+                "expected_attacks": job.expected_attacks,
+                "provider": job.provider,
+                "started_at": job.started_at.isoformat(),
+                "footer_audit_head": None,
+            },
+        )
+
+    @app.get("/scans/{scan_id}/events")
+    async def scan_events(scan_id: str) -> Any:
+        job = _SCANS.get(scan_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="scan id not found")
+
+        async def stream() -> Any:
+            idx = 0
+            while True:
+                # Drain any pending events under the condition, then yield
+                # outside it so a slow client can't hold the lock.
+                async with job.cond:
+                    pending = job.events[idx:]
+                    idx = len(job.events)
+                    done = job.done
+                    err = job.error
+                    url = job.result_url
+                for ev in pending:
+                    yield f"data: {json.dumps(ev)}\n\n"
+                if done:
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "kind": "terminal",
+                                "error": err,
+                                "result_url": url,
+                            }
+                        )
+                        + "\n\n"
+                    )
+                    return
+                # Block up to 8s for the next event; emit an SSE comment as
+                # a heartbeat if we time out so proxies don't close the
+                # connection for being idle.
+                async with job.cond:
+                    try:
+                        await asyncio.wait_for(job.cond.wait(), timeout=8.0)
+                    except asyncio.TimeoutError:
+                        yield ": heartbeat\n\n"
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                # Caddy + nginx hint: do not buffer this response.
+                "X-Accel-Buffering": "no",
+            },
         )
 
     @app.post("/attacks/{attack_id}/replay")

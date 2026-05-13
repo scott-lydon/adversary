@@ -22,7 +22,11 @@ from typing import Any
 
 from adversary.agents.documentation import DocumentationAgent
 from adversary.agents.judge import JudgeAgent
-from adversary.agents.orchestrator import CampaignOutcome, OrchestratorAgent
+from adversary.agents.orchestrator import (
+    CampaignOutcome,
+    OrchestratorAgent,
+    ProgressCallback,
+)
 from adversary.models import Attack, AttackCategory, TargetMessage
 from adversary.models.target_record import TargetRecord
 from adversary.providers import ProviderError, ScriptedProvider
@@ -84,6 +88,7 @@ async def run_scan_for_target(
     task_token: str | None,
     patient_id: str | None,
     reports_dir: Path,
+    progress_callback: ProgressCallback = None,
 ) -> list[CampaignOutcome]:
     """Execute a real scan against the given registered target.
 
@@ -92,6 +97,10 @@ async def run_scan_for_target(
     adapter-construction problems (bad URL shape, missing token for the live
     Co-Pilot, etc.). Otherwise runs the orchestrator and returns the
     per-campaign outcomes.
+
+    The ``progress_callback`` is an optional async sink the dashboard wires
+    so the /scans/{id} SSE stream can show per-agent live progress; the CLI
+    leaves it None and the loop runs unchanged.
     """
     assert_allowlisted(record)
 
@@ -111,6 +120,7 @@ async def run_scan_for_target(
         max_campaigns=max_campaigns,
         seed=seed,
         target_record=record,
+        progress_callback=progress_callback,
     )
     return await orch.run_scan()
 

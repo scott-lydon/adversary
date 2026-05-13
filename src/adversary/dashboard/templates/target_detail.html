@@ -50,8 +50,8 @@
         <span class="muted text-xs">(non-secret metadata; the credential itself is encrypted at rest and never rendered)</span>
       </li>
       {% endif %}
-      <li><span class="muted">registered_at:</span> <code>{{ target.registered_at }}</code></li>
-      <li><span class="muted">last_used_at:</span> <code>{{ target.last_used_at or '—' }}</code></li>
+      <li><span class="muted">registered_at:</span> {{ target.registered_at | local_time }}</li>
+      <li><span class="muted">last_used_at:</span> {{ target.last_used_at | local_time }}</li>
       <li>
         <span class="muted">allowlisted:</span>
         {% if target.allowlisted %}
@@ -275,7 +275,7 @@
       {% for r in recent_campaigns %}
       <tr>
         <td><a class="font-mono text-xs" href="/campaigns/{{ r.session_id }}">{{ r.session_id }}</a></td>
-        <td class="text-xs muted">{{ r.created_at }}</td>
+        <td class="text-xs muted">{{ r.created_at | local_time }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -304,7 +304,7 @@
           <span class="badge {{ cls }}">{{ f.severity }}</span>
         </td>
         <td><code>{{ f.category }}</code></td>
-        <td class="text-xs muted">{{ f.created_at }}</td>
+        <td class="text-xs muted">{{ f.created_at | local_time }}</td>
       </tr>
       {% endfor %}
     </tbody>

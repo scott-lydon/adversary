@@ -1,0 +1,186 @@
+{% extends "_base.html" %}
+{% block title %}— Scan {{ scan_id }}{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+  <a href="/targets/{{ target_id }}" class="text-sm muted">← back to {{ target_name }}</a>
+  <h1 class="text-3xl font-bold mt-2">Scan in progress</h1>
+  <div class="muted text-sm mt-2 flex flex-wrap gap-x-4 gap-y-1">
+    <span>scan_id: <code>{{ scan_id }}</code></span>
+    <span>target: <code>{{ target_name }}</code></span>
+    <span>provider: <code>{{ provider }}</code></span>
+    <span>started: <time class="user-tz" datetime="{{ started_at }}">{{ started_at }}</time></span>
+  </div>
+</div>
+
+<div class="panel p-5 mb-5">
+  <div class="flex items-center justify-between mb-3">
+    <div id="progress-label" class="text-base font-medium">Spinning up the orchestrator…</div>
+    <div id="progress-meta" class="text-sm muted">0 / {{ expected_attacks }} attacks</div>
+  </div>
+  <div class="h-3 rounded-full overflow-hidden" style="background: var(--panel2);">
+    <div id="progress-bar"
+         class="h-full transition-all duration-500 ease-out"
+         style="width: 0%; background: linear-gradient(90deg, var(--accent) 0%, var(--good) 100%);"></div>
+  </div>
+  <div class="flex justify-between text-xs muted mt-2">
+    <span id="cost-meta">cost: $0.0000</span>
+    <span id="campaign-meta">campaign 0 / —</span>
+  </div>
+</div>
+
+<div class="panel p-5">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-lg font-semibold">Event log</h2>
+    <span id="event-count" class="muted text-xs">0 events</span>
+  </div>
+  <ol id="event-log" class="text-sm space-y-2"></ol>
+</div>
+
+<div id="done-banner" class="mt-6 panel p-5 hidden" style="border-color: var(--good);">
+  <div class="font-medium good">Scan complete</div>
+  <div id="done-summary" class="muted text-sm mt-1"></div>
+  <div class="muted text-xs mt-2">Redirecting to the results page in 2 seconds…</div>
+</div>
+
+<div id="error-banner" class="mt-6 panel p-5 hidden" style="border-color: var(--bad);">
+  <div class="font-medium bad">Scan failed</div>
+  <div id="error-message" class="muted text-sm mt-1 whitespace-pre-wrap"></div>
+  <div class="muted text-xs mt-2">
+    <a href="/targets/{{ target_id }}">← back to target</a>
+  </div>
+</div>
+
+<script>
+const scanId          = {{ scan_id | tojson }};
+const targetId        = {{ target_id | tojson }};
+const expectedAttacks = {{ expected_attacks }};
+const totalCampaigns  = {{ expected_attacks // 5 }};
+
+const elLabel    = document.getElementById("progress-label");
+const elMeta     = document.getElementById("progress-meta");
+const elBar      = document.getElementById("progress-bar");
+const elLog      = document.getElementById("event-log");
+const elCount    = document.getElementById("event-count");
+const elCost     = document.getElementById("cost-meta");
+const elCampaign = document.getElementById("campaign-meta");
+const elDone     = document.getElementById("done-banner");
+const elDoneS    = document.getElementById("done-summary");
+const elErr      = document.getElementById("error-banner");
+const elErrMsg   = document.getElementById("error-message");
+
+let attacksDone = 0;
+let totalEvents = 0;
+let campaignsStarted = 0;
+let lastCost = 0;
+
+// kind → which agent badge to wear.
+const AGENT_FOR_KIND = {
+  scan_start:           "orchestrator",
+  campaign_start:       "orchestrator",
+  budget_exhausted:     "orchestrator",
+  red_team_start:       "red_team",
+  red_team_done:        "red_team",
+  target_send:          "target_adapter",
+  target_response:      "target_adapter",
+  judge_start:          "judge",
+  judge_done:           "judge",
+  documentation_start:  "documentation",
+  documentation_done:   "documentation",
+  campaign_done:        "orchestrator",
+  scan_done:            "orchestrator",
+  server_traceback:     "orchestrator",
+};
+
+// kind → human-readable summary. The shape of `e` is the event payload.
+const LABEL_FOR_KIND = {
+  scan_start:           (e) => `Orchestrator started · ${e.provider} provider, budget $${(e.budget_usd||0).toFixed(2)}, up to ${e.max_campaigns} campaigns`,
+  campaign_start:       (e) => `Campaign ${e.campaign_index + 1}: orchestrator picked ${e.category} / ${e.subcategory}`,
+  budget_exhausted:     (e) => `Budget exhausted at $${(e.spent_usd||0).toFixed(4)}; halting before next campaign.`,
+  red_team_start:       (e) => `Red Team (${(e.model||"").replace("together_ai/","")}) generating attacks…`,
+  red_team_done:        (e) => `Red Team produced ${e.attacks} attacks`,
+  target_send:          (e) => `Sending attack ${e.n}/${e.of} to target: “${(e.preview||"").slice(0,60)}…”`,
+  target_response:      (e) => `Target responded in ${e.latency_ms}ms`,
+  judge_start:          (e) => `Judge evaluating attack ${e.n}/${e.of}`,
+  judge_done:           (e) => `Judge → ${e.verdict} (${Math.round((e.confidence||0)*100)}% confidence)`,
+  documentation_start:  (e) => `Documentation writing report for ${e.exploits} exploit(s)…`,
+  documentation_done:   (e) => `Report saved: ${e.report_id}`,
+  campaign_done:        (e) => `Campaign done: ${e.successes} success / ${e.partials} partial / ${e.fails} fail · $${(e.dollar_cost||0).toFixed(4)} total`,
+  scan_done:            (e) => `Scan complete: ${e.campaigns} campaigns, ${e.attacks} attacks, ${e.exploits} exploits, $${(e.dollar_cost||0).toFixed(4)}`,
+  server_traceback:     (e) => `Server error (see error banner below)`,
+};
+
+function fmtClock(epochSec) {
+  // Viewer's locale + tz; Austin user sees CDT, anyone else sees their tz.
+  return new Date(epochSec * 1000).toLocaleTimeString([], {
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  });
+}
+
+function appendEvent(ev) {
+  totalEvents++;
+  elCount.textContent = `${totalEvents} events`;
+
+  const agent = AGENT_FOR_KIND[ev.kind] || "orchestrator";
+  const label = (LABEL_FOR_KIND[ev.kind] || ((e) => e.kind))(ev);
+
+  const li = document.createElement("li");
+  li.className = "flex gap-3 items-start";
+  li.innerHTML = `
+    <span class="text-xs muted cell-mono shrink-0" style="min-width: 86px;">${fmtClock(ev.ts)}</span>
+    <span class="agent-badge agent-${agent}">${agent}</span>
+    <span class="flex-1">${label}</span>
+  `;
+  elLog.prepend(li);
+
+  if (LABEL_FOR_KIND[ev.kind]) elLabel.textContent = label;
+
+  if (ev.kind === "target_response") {
+    attacksDone++;
+    elMeta.textContent = `${attacksDone} / ${expectedAttacks} attacks`;
+    elBar.style.width = `${Math.min(100, (attacksDone / expectedAttacks) * 100)}%`;
+  }
+  if (ev.kind === "campaign_start") {
+    campaignsStarted++;
+    elCampaign.textContent = `campaign ${campaignsStarted} / ${totalCampaigns}`;
+  }
+  if (typeof ev.dollar_cost === "number") {
+    lastCost = ev.dollar_cost;
+    elCost.textContent = `cost: $${lastCost.toFixed(4)}`;
+  }
+}
+
+const es = new EventSource(`/scans/${scanId}/events`);
+es.onmessage = (e) => {
+  let ev;
+  try { ev = JSON.parse(e.data); }
+  catch (err) { console.error("bad SSE payload", e.data); return; }
+
+  if (ev.kind === "terminal") {
+    es.close();
+    if (ev.error) {
+      elBar.style.width = "100%";
+      elBar.style.background = "var(--bad)";
+      elErrMsg.textContent = ev.error;
+      elErr.classList.remove("hidden");
+      elLabel.textContent = "Scan failed";
+    } else {
+      elBar.style.width = "100%";
+      elDoneS.textContent = `${attacksDone} attacks, $${lastCost.toFixed(4)} spent`;
+      elDone.classList.remove("hidden");
+      elLabel.textContent = "Done";
+      setTimeout(() => {
+        if (ev.result_url) location.assign(ev.result_url);
+        else location.assign(`/targets/${targetId}`);
+      }, 2000);
+    }
+    return;
+  }
+  appendEvent(ev);
+};
+es.onerror = (e) => {
+  // EventSource auto-reconnects on transient drops; nothing to do here.
+  console.warn("SSE error event (auto-reconnecting):", e);
+};
+</script>
+{% endblock %}

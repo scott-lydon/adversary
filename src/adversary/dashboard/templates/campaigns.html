@@ -38,7 +38,7 @@
         <td class="cell-mono">
           <a href="/campaigns/{{ c.session_id }}" class="no-underline">{{ c.session_id }}</a>
         </td>
-        <td class="text-xs muted nowrap">{{ (c.created_at or '')|replace('T', ' ')|replace('+00:00', ' UTC')|truncate(20, True, '') }}</td>
+        <td class="text-xs muted nowrap">{{ c.created_at | local_time }}</td>
         <td class="nowrap">{% with target_id=c.target_id %}{% include '_target_badge.html' %}{% endwith %}</td>
         <td class="nowrap">
           {% if c.category %}

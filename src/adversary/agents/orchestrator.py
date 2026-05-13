@@ -15,13 +15,20 @@ from __future__ import annotations
 
 import hashlib
 import random
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from uuid import uuid4
 
 import structlog
+
+# Optional event sink. The dashboard wires this to an asyncio.Queue so the
+# /scans/{id} SSE stream can render per-agent progress; the CLI leaves it None
+# and the orchestrator just runs as before. Failures inside the callback are
+# logged and swallowed so an SSE consumer can never wedge a real scan.
+ProgressCallback = Optional[Callable[[str, dict[str, Any]], Awaitable[None]]]
 
 from adversary.agents.documentation import DocumentationAgent
 from adversary.agents.judge import JudgeAgent
@@ -118,6 +125,7 @@ class OrchestratorAgent:
         max_campaigns: int = 3,
         seed: int | None = None,
         target_record: TargetRecord | None = None,
+        progress_callback: ProgressCallback = None,
     ) -> None:
         self.adapter = adapter
         self.provider = provider
@@ -131,6 +139,26 @@ class OrchestratorAgent:
         self.judge = JudgeAgent(provider)
         self.documentation = DocumentationAgent(provider)
         self.spent_usd = 0.0
+        self._progress = progress_callback
+
+    async def _emit(self, kind: str, **fields: Any) -> None:
+        """Push a progress event to the dashboard sink, if one is attached.
+
+        Failures are logged but never propagate: a busted SSE consumer must
+        not be able to crash the scan loop. The same payload is also visible
+        in structlog at info level via the existing campaign_start /
+        campaign_done lines for parity with the CLI path.
+        """
+        if self._progress is None:
+            return
+        try:
+            await self._progress(kind, fields)
+        except Exception as exc:  # noqa: BLE001 - we deliberately swallow
+            logger.warning(
+                "orchestrator.progress_callback_failed",
+                kind=kind,
+                err=repr(exc),
+            )
 
     @property
     def target_id(self) -> str | None:
@@ -172,12 +200,25 @@ class OrchestratorAgent:
     async def run_scan(self) -> list[CampaignOutcome]:
         outcomes: list[CampaignOutcome] = []
         runs_by_category: dict[str, int] = {}
+        await self._emit(
+            "scan_start",
+            budget_usd=self.budget_usd,
+            max_campaigns=self.max_campaigns,
+            target_name=self.target_name,
+            target_id=self.target_id,
+            provider=getattr(self.provider, "name", "scripted"),
+        )
         for c_idx in range(self.max_campaigns):
             if self.spent_usd >= self.budget_usd:
                 logger.warning(
                     "orchestrator.budget_exhausted",
                     spent=self.spent_usd,
                     budget=self.budget_usd,
+                )
+                await self._emit(
+                    "budget_exhausted",
+                    spent_usd=self.spent_usd,
+                    budget_usd=self.budget_usd,
                 )
                 break
 
@@ -216,6 +257,15 @@ class OrchestratorAgent:
             subcategory=subcategory,
             budget_remaining=brief.budget_remaining_usd,
         )
+        await self._emit(
+            "campaign_start",
+            campaign_id=campaign_id,
+            campaign_index=idx,
+            category=category.value,
+            subcategory=subcategory,
+            budget_remaining_usd=brief.budget_remaining_usd,
+            max_attacks=brief.max_attacks,
+        )
 
         self.store.append_audit(
             agent="orchestrator",
@@ -246,19 +296,48 @@ class OrchestratorAgent:
 
         # 1) RedTeam queue -> attacks
         red_queue: "list[Attack]" = []
+        await self._emit(
+            "red_team_start",
+            campaign_id=campaign_id,
+            model=self.red_team.provider.models.get("red_team")
+            if hasattr(self.red_team.provider, "models")
+            else getattr(self.red_team.provider, "name", "scripted"),
+        )
         attacks = await self.red_team.generate(brief)
         red_queue.extend(attacks)
+        await self._emit(
+            "red_team_done",
+            campaign_id=campaign_id,
+            attacks=len(attacks),
+        )
 
         # 2) Target queue -> responses
         session = await self.adapter.open_session(
             user_id="adversary_operator", patient_id=None
         )
         responses_q: list[tuple[Attack, TargetResponse]] = []
-        for attack in red_queue:
+        for attack_idx, attack in enumerate(red_queue):
+            await self._emit(
+                "target_send",
+                campaign_id=campaign_id,
+                attack_id=attack.attack_id,
+                n=attack_idx + 1,
+                of=len(red_queue),
+                preview=attack.prompt_sequence[0].text[:120]
+                if attack.prompt_sequence
+                else "",
+            )
             response = await self.adapter.send_multi_turn(
                 session, attack.prompt_sequence
             )
             responses_q.append((attack, response))
+            await self._emit(
+                "target_response",
+                campaign_id=campaign_id,
+                attack_id=attack.attack_id,
+                latency_ms=response.latency_ms,
+                response_preview=response.text[:140],
+            )
             self.store.insert_attack(
                 attack.model_dump(), _utcnow(), target_id=self.target_id
             )
@@ -314,7 +393,14 @@ class OrchestratorAgent:
             campaign_id=campaign_id, category=category, subcategory=subcategory
         )
         confirmed_exploits: list[dict[str, Any]] = []
-        for attack, response in responses_q:
+        for judge_idx, (attack, response) in enumerate(responses_q):
+            await self._emit(
+                "judge_start",
+                campaign_id=campaign_id,
+                attack_id=attack.attack_id,
+                n=judge_idx + 1,
+                of=len(responses_q),
+            )
             verdict = await self.judge.evaluate(
                 attack=attack,
                 target_response=response,
@@ -352,6 +438,14 @@ class OrchestratorAgent:
             self.spent_usd += attack.generation_metadata.dollar_cost
             self.spent_usd += verdict.dollar_cost
             outcome.dollar_cost = self.spent_usd
+            await self._emit(
+                "judge_done",
+                campaign_id=campaign_id,
+                attack_id=attack.attack_id,
+                verdict=verdict.verdict.value,
+                confidence=verdict.confidence,
+                dollar_cost=self.spent_usd,
+            )
             if verdict.verdict == VerdictLabel.SUCCESS:
                 outcome.successes += 1
                 confirmed_exploits.append(
@@ -380,11 +474,25 @@ class OrchestratorAgent:
                 outcome.fails += 1
 
         # 4) Documentation queue -> reports
-        for exploit in confirmed_exploits:
+        if confirmed_exploits:
+            await self._emit(
+                "documentation_start",
+                campaign_id=campaign_id,
+                exploits=len(confirmed_exploits),
+            )
+        for doc_idx, exploit in enumerate(confirmed_exploits):
             report_path = await self.documentation.write_report(
                 exploit, self.reports_dir
             )
             outcome.reports.append(str(report_path))
+            await self._emit(
+                "documentation_done",
+                campaign_id=campaign_id,
+                n=doc_idx + 1,
+                of=len(confirmed_exploits),
+                report_id=exploit.get("report_id", report_path.stem),
+                report_path=str(report_path),
+            )
             self.store.insert_finding(
                 {
                     "id": exploit.get("report_id", report_path.stem),
@@ -420,5 +528,14 @@ class OrchestratorAgent:
             partials=outcome.partials,
             fails=outcome.fails,
             dollar_cost=self.spent_usd,
+        )
+        await self._emit(
+            "campaign_done",
+            campaign_id=campaign_id,
+            successes=outcome.successes,
+            partials=outcome.partials,
+            fails=outcome.fails,
+            dollar_cost=self.spent_usd,
+            reports=len(outcome.reports),
         )
         return outcome
