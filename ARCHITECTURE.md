@@ -30,6 +30,40 @@ The rest of this document expands each section.
 
 ---
 
+## Agent interaction diagram
+
+```mermaid
+graph TB
+  Operator["Operator<br/>CLI / Web Dashboard"]
+  Orch["Orchestrator<br/>gpt-5-mini<br/><i>strategic planner</i>"]
+  RT["Red Team<br/>Llama 3.1 70B (Together)<br/><i>attack generator + mutator</i>"]
+  TA["Target Adapter<br/>Clinical Co-Pilot<br/><i>HTTP boundary</i>"]
+  Judge["Judge<br/>Claude Sonnet 4.6<br/><i>independent verdict</i>"]
+  Doc["Documentation<br/>gpt-5<br/><i>vulnerability reports</i>"]
+  Target["Live Target<br/>Clinical Co-Pilot at<br/>http://5.161.253.237:8801"]
+  PG[("SQLite + audit log<br/>coverage, lineage, audit")]
+  Obs["Observability<br/>Langfuse, OpenTelemetry,<br/>Prometheus"]
+  Reg["Regression Harness<br/>deterministic Python"]
+
+  Operator -->|"adversary scan"| Orch
+  Orch -->|"CampaignBrief"| RT
+  RT -->|"AttackBatch"| TA
+  TA -->|"HTTP POST /chat"| Target
+  Target -->|"ChatResponse"| TA
+  TA -->|"TargetResponse"| Judge
+  Judge -->|"Verdict"| Doc
+  Judge -->|"Verdict"| PG
+  Doc -->|"vulnerability-reports/*.md"| Operator
+  PG -.->|"coverage signals"| Orch
+  Obs -.->|"traces, metrics"| Orch
+  PG -->|"confirmed exploits"| Reg
+  Reg -->|"replay on deploy"| TA
+```
+
+The data flow honors strict role separation. The Orchestrator never generates attacks. The Red Team never evaluates verdicts. The Judge never writes reports. Each of those handoffs would compromise the surface it crossed. The Target Adapter is the only component that talks to the deployed system.
+
+---
+
 ## 1. Topology
 
 ```
