@@ -14,8 +14,27 @@
 </div>
 
 <div class="panel p-5 mb-5">
+  <!--
+    Progress label + secondary detail line. The label is the current
+    headline step; the detail line carries the supporting payload
+    (attack preview, response preview, judge rationale, etc.) so a
+    fast reader can scan more than the headline. Both lines wrap to
+    a sensible max-height (CSS line-clamp 4) so a long preview does
+    not push the rest of the page around. Hover or focus reveals
+    overflow via tooltip on `progress-label-wrap`.
+  -->
   <div class="flex items-start justify-between mb-3 gap-4">
-    <div id="progress-label" class="text-base font-medium flex-1 min-w-0" style="word-break: break-word; overflow-wrap: anywhere;">Spinning up the orchestrator…</div>
+    <div id="progress-label-wrap" class="flex-1 min-w-0" style="min-height: 3.5rem;">
+      <div id="progress-label"
+           class="text-base font-medium leading-snug"
+           style="word-break: break-word; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;">
+        Spinning up the orchestrator
+      </div>
+      <div id="progress-detail"
+           class="text-xs muted mt-1 font-mono leading-relaxed"
+           style="word-break: break-word; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden; max-height: 7em;">
+      </div>
+    </div>
     <div id="progress-meta" class="text-sm muted shrink-0 whitespace-nowrap">0 / {{ expected_attacks }} attacks</div>
   </div>
   <div class="h-3 rounded-full overflow-hidden" style="background: var(--panel2);">
@@ -58,6 +77,7 @@ const expectedAttacks = {{ expected_attacks }};
 const totalCampaigns  = {{ expected_attacks // 5 }};
 
 const elLabel    = document.getElementById("progress-label");
+const elDetail   = document.getElementById("progress-detail");
 const elMeta     = document.getElementById("progress-meta");
 const elBar      = document.getElementById("progress-bar");
 const elLog      = document.getElementById("event-log");
@@ -94,25 +114,40 @@ const AGENT_FOR_KIND = {
 };
 
 // kind → human-readable summary. The shape of `e` is the event payload.
-// No truncation: the event log column is flex-1 so the row wraps if a
-// line is long. The red_team prompt caps each attack at ~50 words so
-// the preview stays readable without a slice().
+// Trailing ellipses removed: a horizontal `…` glyph at the end of a label
+// reads as "this text is truncated" to a careful viewer, but the labels
+// here are complete sentences. If you genuinely want to indicate
+// "in flight, more text coming", use the detail line instead.
 const LABEL_FOR_KIND = {
   startup:              (e) => e.label || `Startup step: ${e.step}`,
-  scan_start:           (e) => `Orchestrator started · ${e.provider} provider, budget $${(e.budget_usd||0).toFixed(2)}, up to ${e.max_campaigns} campaigns`,
+  scan_start:           (e) => `Orchestrator started · ${e.provider} provider · budget $${(e.budget_usd||0).toFixed(2)} · up to ${e.max_campaigns} campaigns`,
   campaign_start:       (e) => `Campaign ${e.campaign_index + 1}: orchestrator picked ${e.category} / ${e.subcategory}`,
   budget_exhausted:     (e) => `Budget exhausted at $${(e.spent_usd||0).toFixed(4)}; halting before next campaign.`,
-  red_team_start:       (e) => `Red Team (${(e.model||"").replace("together_ai/","")}) generating attacks…`,
+  red_team_start:       (e) => `Red Team generating attacks · model ${(e.model||"").replace("together_ai/","")}${e.category ? " · " + e.category + (e.subcategory ? "/" + e.subcategory : "") : ""}`,
   red_team_done:        (e) => `Red Team produced ${e.attacks} attacks`,
-  target_send:          (e) => `Sending attack ${e.n}/${e.of} to target: "${e.preview || ""}"`,
-  target_response:      (e) => `Target responded in ${e.latency_ms}ms: "${e.response_preview || ""}"`,
+  target_send:          (e) => `Sending attack ${e.n}/${e.of} to target`,
+  target_response:      (e) => `Target responded in ${e.latency_ms}ms (attack ${e.n}/${e.of})`,
   judge_start:          (e) => `Judge evaluating attack ${e.n}/${e.of}`,
   judge_done:           (e) => `Judge → ${e.verdict} (${Math.round((e.confidence||0)*100)}% confidence)`,
-  documentation_start:  (e) => `Documentation writing report for ${e.exploits} exploit(s)…`,
+  documentation_start:  (e) => `Documentation writing report for ${e.exploits} exploit(s)`,
   documentation_done:   (e) => `Report saved: ${e.report_id}`,
   campaign_done:        (e) => `Campaign done: ${e.successes} success / ${e.partials} partial / ${e.fails} fail · $${(e.dollar_cost||0).toFixed(4)} total`,
   scan_done:            (e) => `Scan complete: ${e.campaigns} campaigns, ${e.attacks} attacks, ${e.exploits} exploits, $${(e.dollar_cost||0).toFixed(4)}`,
   server_traceback:     (e) => `Server error (see error banner below)`,
+};
+
+// kind → optional secondary detail string. This is the place to put the
+// long, in-flight text a fast reader wants to see before the next event
+// replaces it: the actual attack prompt, the actual response, the
+// judge's evidence snippet, etc. Return null/undefined to leave the
+// detail line empty.
+const DETAIL_FOR_KIND = {
+  red_team_start:       (e) => e.category ? `Goal: produce ${e.attacks || 5} novel ${e.subcategory || e.category} attacks under ${e.budget_usd ? "$" + Number(e.budget_usd).toFixed(2) + " budget" : "the campaign budget"}.` : null,
+  target_send:          (e) => e.preview ? `Prompt: ${e.preview}` : null,
+  target_response:      (e) => e.response_preview ? `Response: ${e.response_preview}` : null,
+  judge_done:           (e) => (e.evidence || e.notes) ? `Evidence: ${(e.evidence || e.notes || "").slice(0, 600)}` : null,
+  documentation_start:  (e) => e.exploits ? `Writing markdown reports for ${e.exploits} confirmed exploit(s); critical-severity ones gate on human approval before commit.` : null,
+  campaign_done:        (e) => e.category ? `Category ${e.category}/${e.subcategory || ""} done after ${e.attacks_run} attacks.` : null,
 };
 
 function fmtClock(epochSec) {
@@ -154,7 +189,15 @@ function appendEvent(ev) {
   li.appendChild(labelSpan);
   elLog.prepend(li);
 
-  if (LABEL_FOR_KIND[ev.kind]) elLabel.textContent = label;
+  if (LABEL_FOR_KIND[ev.kind]) {
+    elLabel.textContent = label;
+    // Secondary detail line: payload-derived "more text the user wants
+    // to read" for the current step. Cleared when an event has no detail
+    // so a stale preview from a previous attack does not linger.
+    const detailFn = DETAIL_FOR_KIND[ev.kind];
+    const detail = detailFn ? (detailFn(ev) || "") : "";
+    elDetail.textContent = detail;
+  }
 
   if (ev.kind === "target_response") {
     attacksDone++;
