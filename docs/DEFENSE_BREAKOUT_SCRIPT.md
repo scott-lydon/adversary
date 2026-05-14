@@ -45,7 +45,7 @@ Four costs I accepted.
 
 **Two.** The Judge scores 94 percent on the calibration set. Six percent of verdicts are wrong in either direction. The platform surfaces this number on the dashboard rather than hiding it.
 
-**Three.** Per-campaign cost is about $1.50. At 100K campaigns a month, projection is low five figures. There is an optimization path through Judge distillation and batch APIs; not built this week.
+**Three.** Per-campaign cost measured on the 2026-05-14 live scan is $0.041, 40x cheaper than the $1.50 projection. At 100K campaigns a month the projected cost lands in the low four figures, not five. The original projection over-counted Red Team token usage; Llama 3.1 70B is dramatically cheaper per attack than I assumed.
 
 **Four.** LangGraph is a framework dependency. Each node is a plain Python async function, so a swap to Temporal or hand-rolled state machine is a refactor, not a rewrite.
 
