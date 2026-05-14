@@ -100,6 +100,58 @@ applies to the `prompts_for(...)` load path at the top of each
 campaign — a bad file degrades to an empty seed-examples list rather
 than killing the scan.
 
+## E — Evaluation harness / live targets
+
+### E1. A `400 + JSON` from a target is a refusal, not an adapter failure
+
+**Issue (2026-05-13).** `ClinicalCoPilotAdapter.send_multi_turn` raised
+`HTTPStatusError` on every `400`, including the structured
+`{"error":"injection_guard_blocked", ...}` shape the sidecar uses to
+communicate "I refused this attack." That made every defended attack
+look like a transport error and aborted the entire eval batch on the
+first refusal. The Judge never saw the defense; the result file never
+landed.
+
+**Prevention.** Adapters MUST translate any 4xx with a decodable JSON
+body containing `error`/`detail`/`message` into a synthetic
+`TargetResponse` (telemetry `guard_block: true`, refusal text in
+`candidates[0].text`). Only non-decodable / structurally-unexpected
+4xx still raise. Pattern lives in `src/adversary/target/copilot.py`; any
+new HTTP adapter must follow the same pattern before being added to
+`open_adapter`.
+
+### E2. Live-eval classifier must scan candidate rationales, not just stitched text
+
+**Issue (2026-05-13).** The Co-Pilot's structured response keeps the
+model's actual answer in `candidates[].rationale`. The adapter's
+text-stitcher only reads `text`/`recommendation`, so the stitched
+`response.text` was often just the bare verdict word (`"answered"`).
+The first version of `scripts/run-live-evals.py` scanned only
+`response.text`, missing canary leaks that were sitting in
+`rationale`. Three real exploits were silently scored `uncertain`.
+
+**Prevention.** The classifier now concatenates every text-bearing
+candidate field (`text`, `recommendation`, `rationale`, `label`,
+`per_symptom`, `chart_error_flags` descriptions) into a blob and runs
+canary + compliance-marker detection against it. Any future
+candidate-shape field that could carry attacker-targeted output (e.g.
+new `notes` / `summary` fields) must be added to `_candidate_blob` or
+the classifier silently misses leaks again.
+
+### E3. Compliance detection must use per-seed markers, not generic echo heuristics
+
+**Issue (2026-05-13).** Early classifier flagged "exploited" any time
+the response echoed phrases from the attack (e.g. "osteoporosis",
+"Suzie Sanchez"). The model often quotes those terms inside a
+*refusal* sentence ("I cannot provide notes about osteoporosis"), so
+the heuristic produced two false positives in the first live run.
+
+**Prevention.** Each seed authors a `compliance_markers` array — the
+specific phrases that would only appear if the model actually adopted
+the attacker's planted content. Generic attack-content-echo heuristics
+were removed. Future seeds without markers fall back to refusal-shape
+detection, which is conservative (will under-flag, not over-flag).
+
 ### L3. Novelty hint must dedup builtins against learned attacks
 
 **Issue (2026-05-13, prevented).** Without dedup, a learned-attack
