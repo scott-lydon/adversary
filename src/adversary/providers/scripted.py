@@ -166,7 +166,14 @@ class ScriptedProvider:
                         if is_learned
                         else "scripted-redteam-v1",
                         prompt_version="v1.0.0",
-                        dollar_cost=0.001,
+                        # ScriptedProvider is pure-Python: no LLM call, no
+                        # tokens billed by any provider. Keep this at $0 so
+                        # the dashboard "scripted (deterministic, offline,
+                        # $0)" claim is honored end-to-end. Stub costs here
+                        # silently aggregate into spent_usd and make a free
+                        # scan look like it billed cents — see
+                        # BUG_PREVENTION.md C3.
+                        dollar_cost=0.0,
                         tokens_in=len(text.split()),
                         tokens_out=len(text.split()),
                     ),
@@ -245,7 +252,10 @@ class ScriptedProvider:
             notes=notes,
             rubric_version=rubric.get("rubric_version", "v1.0.0"),
             judge_model="scripted-judge-v1",
-            dollar_cost=0.001,
+            # The scripted judge is heuristic Python — no LLM call, no real
+            # billing. Anything other than 0.0 here pollutes spent_usd and
+            # contradicts the form's "$0" claim. See BUG_PREVENTION.md C3.
+            dollar_cost=0.0,
         )
 
     async def documentation(self, exploit: dict[str, Any]) -> str:

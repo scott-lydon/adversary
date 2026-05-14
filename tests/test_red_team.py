@@ -29,7 +29,12 @@ async def test_scripted_generates_valid_attack() -> None:
     assert a.subcategory == "chart_notes"
     assert a.prompt_sequence and a.prompt_sequence[0].text
     assert a.expected_unsafe_behavior
-    assert a.generation_metadata.dollar_cost > 0
+    # The ScriptedProvider is pure-Python and bills nothing. It used to
+    # stamp 0.001 as a placeholder, which leaked into spent_usd and
+    # contradicted the dashboard's "scripted (deterministic, offline, $0)"
+    # label. Pin the contract: scripted dollar_cost is exactly 0.0. See
+    # BUG_PREVENTION.md C3.
+    assert a.generation_metadata.dollar_cost == 0.0
 
 
 @pytest.mark.asyncio
