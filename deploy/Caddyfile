@@ -15,17 +15,16 @@ adversary.5-161-253-237.sslip.io {
 
     encode zstd gzip
 
-    # Basic-Auth gate: admin / gauntlet-g5 (cohort-demo credentials,
-    # NOT secret). The bcrypt hash below was generated with
-    # `bcrypt.gensalt(rounds=10)` and verified locally before commit; the
-    # plaintext is intentionally public so graders can reach the
-    # dashboard with zero side-channels.
+    # Basic-Auth gate: admin / pass (cohort-demo credentials, NOT secret).
+    # The bcrypt hash below was generated with `bcrypt.gensalt(rounds=10)`
+    # and verified locally before commit; the plaintext is intentionally
+    # public so graders can reach the dashboard with zero side-channels.
     #
-    # Rotated 2026-05-14 from `pass` to `gauntlet-g5`. The previous
-    # password was so common that Mac Keychain auto-filled it without
-    # any visible prompt, which made it look like the gate was off. A
-    # cohort-specific password forces the prompt to appear at least
-    # once.
+    # Note for operator: macOS Keychain may auto-fill these creds without
+    # ever showing the prompt — that is expected, the gate is still
+    # enforced server-side. To force the prompt to appear, open the URL
+    # in a private/incognito window or delete the Keychain entry for
+    # `adversary.5-161-253-237.sslip.io`.
     #
     # Safari quirk note: when the gate was on with a randomly-generated
     # password earlier, Safari re-prompted on every internal navigation.
@@ -34,7 +33,7 @@ adversary.5-161-253-237.sslip.io {
     # for graders on Safari: use Chrome/Firefox, or check "Remember this
     # password" the first time. Re-removing the gate is a one-line edit.
     basic_auth {
-        admin $2b$10$NEDZV1PEJfRvcx9JY5bWWem9GZcW.SmkQ5SbfquA5RExAqobt1ede
+        admin $2b$10$y9/FxsfGZb0oMlf78KHDM.q6dgp9/YR7gSoluhhtXrr3JvT4Zw256
     }
 
     reverse_proxy 127.0.0.1:8765 {

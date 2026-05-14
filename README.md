@@ -44,7 +44,7 @@ is already deployed and gated.
 2. Your browser will prompt for HTTP Basic-Auth (a native system dialog,
    not an HTML form rendered by the page). Type:
    - username `admin`
-   - password `gauntlet-g5`
+   - password `pass`
 
    These are cohort-demo credentials by design (the bcrypt hash is checked
    into [`deploy/Caddyfile`](deploy/Caddyfile) with a comment saying so);
