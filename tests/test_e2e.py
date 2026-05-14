@@ -44,6 +44,26 @@ async def test_full_scan_echo_target_produces_finding(tmp_path: Path) -> None:
     assert success_rows["c"] >= 1
     reports = list(reports_dir.glob("ADV-*.md"))
     assert reports, "expected at least one vulnerability report"
+
+    # Every confirmed SUCCESS should be promoted into the learned-attacks
+    # store. The orchestrator constructs the default store, which the
+    # isolated_learned_attacks_path autouse fixture redirects under
+    # tmp_path. Counting rows there is the fastest end-to-end proof that
+    # learning is wired.
+    import os as _os
+
+    learned_attacks_path = Path(_os.environ["ADVERSARY_LEARNED_ATTACKS_PATH"])
+    assert learned_attacks_path.exists(), (
+        "expected the orchestrator to write learned_attacks.json after a "
+        f"SUCCESS verdict; path was {learned_attacks_path}"
+    )
+    payload = json.loads(learned_attacks_path.read_text(encoding="utf-8"))
+    assert payload["version"] >= 1
+    assert payload["attacks"], (
+        "learned_attacks.json was written but no attacks were promoted; "
+        "the SUCCESS verdict path is broken or the confidence threshold is "
+        "filtering everything out"
+    )
     store.close()
 
 

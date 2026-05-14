@@ -33,6 +33,11 @@ ProgressCallback = Optional[Callable[[str, dict[str, Any]], Awaitable[None]]]
 from adversary.agents.documentation import DocumentationAgent
 from adversary.agents.judge import JudgeAgent
 from adversary.agents.red_team import RedTeamAgent
+from adversary.learning import (
+    LearnedAttackError,
+    LearnedAttacksStore,
+    PromotionOutcome,
+)
 from adversary.models import (
     Attack,
     AttackCategory,
@@ -126,6 +131,7 @@ class OrchestratorAgent:
         seed: int | None = None,
         target_record: TargetRecord | None = None,
         progress_callback: ProgressCallback = None,
+        learned_attacks: LearnedAttacksStore | None = None,
     ) -> None:
         self.adapter = adapter
         self.provider = provider
@@ -140,6 +146,13 @@ class OrchestratorAgent:
         self.documentation = DocumentationAgent(provider)
         self.spent_usd = 0.0
         self._progress = progress_callback
+        # Allow callers (tests, dashboards) to swap in a fixture path; default
+        # to the canonical .runtime location. We construct the default lazily
+        # so unit tests that never trigger a SUCCESS verdict don't have to
+        # exist on a filesystem that allows writes to the repo root.
+        self.learned_attacks: LearnedAttacksStore = (
+            learned_attacks if learned_attacks is not None else LearnedAttacksStore()
+        )
 
     async def _emit(self, kind: str, **fields: Any) -> None:
         """Push a progress event to the dashboard sink, if one is attached.
@@ -238,11 +251,37 @@ class OrchestratorAgent:
         subcategory: str,
     ) -> CampaignOutcome:
         campaign_id = f"camp-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{idx:03d}-{uuid4().hex[:6]}"
+        # Seed every campaign with prompts that the Judge previously confirmed
+        # as SUCCESS for this (category, subcategory). The ScriptedProvider
+        # mints attacks from these in addition to its built-in templates;
+        # the LiteLLMProvider feeds them into a "produce something different
+        # from these" novelty hint so the live red-team agent does not just
+        # re-emit prompts we already have. Both providers tolerate an empty
+        # list, so a fresh install with no learned attacks still works.
+        try:
+            learned_prompts = self.learned_attacks.prompts_for(category, subcategory)
+        except LearnedAttackError as exc:
+            # A malformed file should not silently degrade the scan — surface
+            # it on the timeline and continue with no seed examples.
+            logger.error(
+                "orchestrator.learned_attack_load_failed",
+                category=category.value,
+                subcategory=subcategory,
+                error=str(exc),
+            )
+            await self._emit(
+                "learned_attack_load_failed",
+                campaign_id=campaign_id,
+                category=category.value,
+                subcategory=subcategory,
+                error=str(exc),
+            )
+            learned_prompts = []
         brief = CampaignBrief(
             campaign_id=campaign_id,
             category=category,
             subcategory=subcategory,
-            seed_examples=[],
+            seed_examples=learned_prompts,
             prior_failures=[],
             target_session_template={},
             budget_remaining_usd=max(0.0, self.budget_usd - self.spent_usd),
@@ -494,6 +533,68 @@ class OrchestratorAgent:
                         ],
                     }
                 )
+                # Promote this attack into the learned defaults so the next
+                # scan reuses it. Failures here are interesting (file
+                # corruption, permission flips) but must not abort the
+                # campaign — the finding is still valid even if we can't
+                # write it back. Log and emit so the dashboard surfaces
+                # the issue rather than swallowing it.
+                provider_name = getattr(self.provider, "name", "scripted")
+                red_model = (
+                    self.red_team.provider.models.get("red_team")
+                    if hasattr(self.red_team.provider, "models")
+                    else provider_name
+                )
+                try:
+                    outcome_pr: PromotionOutcome = self.learned_attacks.promote(
+                        attack=attack,
+                        verdict=verdict,
+                        source=provider_name,
+                        model=str(red_model or provider_name),
+                        report_id=None,  # filled in later when DocumentationAgent runs
+                    )
+                except LearnedAttackError as exc:
+                    logger.error(
+                        "orchestrator.learned_attack_promote_failed",
+                        attack_id=attack.attack_id,
+                        error=str(exc),
+                    )
+                    await self._emit(
+                        "learned_attack_promote_failed",
+                        campaign_id=campaign_id,
+                        attack_id=attack.attack_id,
+                        error=str(exc),
+                    )
+                else:
+                    self.store.append_audit(
+                        agent="orchestrator",
+                        action="learned_attack_promoted"
+                        if outcome_pr.promoted
+                        else "learned_attack_skipped",
+                        payload={
+                            "campaign_id": campaign_id,
+                            "attack_id": attack.attack_id,
+                            "category": attack.category.value
+                            if isinstance(attack.category, AttackCategory)
+                            else str(attack.category),
+                            "subcategory": attack.subcategory,
+                            "reason": outcome_pr.reason,
+                            "evicted_prompt": outcome_pr.evicted_prompt,
+                            "target_id": self.target_id,
+                            "target_name": self.target_name,
+                        },
+                        occurred_at=_utcnow(),
+                    )
+                    await self._emit(
+                        "learned_attack_promoted"
+                        if outcome_pr.promoted
+                        else "learned_attack_skipped",
+                        campaign_id=campaign_id,
+                        attack_id=attack.attack_id,
+                        promoted=outcome_pr.promoted,
+                        reason=outcome_pr.reason,
+                        evicted_prompt=outcome_pr.evicted_prompt,
+                    )
             elif verdict.verdict == VerdictLabel.PARTIAL:
                 outcome.partials += 1
             else:
