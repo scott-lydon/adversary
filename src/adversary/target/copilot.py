@@ -46,7 +46,10 @@ class ClinicalCoPilotAdapter(TargetAdapter):
         }
 
     async def healthcheck(self) -> bool:
-        url = f"{self.base_url}/healthz"
+        # Sidecar exposes /health (not /healthz). The 2026-05-13 audit
+        # caught this mismatch; keeping the /healthz fallback would mask
+        # a real outage as a healthy boot. Use /health, fail loud on 404.
+        url = f"{self.base_url}/health"
         try:
             async with httpx.AsyncClient(
                 timeout=self.timeout_s, follow_redirects=True
