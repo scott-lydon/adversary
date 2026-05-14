@@ -1862,6 +1862,14 @@ def create_app() -> FastAPI:
                 # one-line narrative
                 row["narrative"] = _narrative_for_audit(row)
                 audit_rows.append(row)
+        # 1-indexed local sequence number per campaign. The global
+        # rowid_seq lives in the database (and is what makes the audit
+        # log's hash chain order-stable) but a user reading ONE
+        # campaign's timeline expects 1..N, not 378..394. The template
+        # shows local_index prominently and rowid_seq as a small annotation
+        # so a power user can still cross-reference the global log.
+        for i, row in enumerate(audit_rows, start=1):
+            row["local_index"] = i
         if not audit_rows and not run:
             store.close()
             raise HTTPException(
@@ -2187,6 +2195,15 @@ def _narrative_for_audit(row: dict[str, Any]) -> str:
             f"Orchestrator closed campaign — success={s} partial={p} "
             f"fail={f} cost=${float(cost):.4f}."
         )
+    if agent == "red_team" and action == "red_team_start":
+        model = payload.get("model", "?")
+        cat = payload.get("category", "?")
+        sub = payload.get("subcategory", "?")
+        nmax = payload.get("max_attacks", "?")
+        return (
+            f"Red Team kicked off — model {model}, generating up to "
+            f"{nmax} attacks for {cat}/{sub}."
+        )
     if agent == "red_team" and action == "attack_generated":
         aid = payload.get("attack_id", "?")
         model = payload.get("model", "?")
@@ -2195,9 +2212,20 @@ def _narrative_for_audit(row: dict[str, Any]) -> str:
             f"Red Team generated {aid} via {model} for "
             f"${float(cost):.6f}."
         )
+    if agent == "target_adapter" and action == "target_send":
+        aid = payload.get("attack_id", "?")
+        n = payload.get("n", "?")
+        of = payload.get("of", "?")
+        preview = (payload.get("preview") or "")[:120]
+        return f"Target adapter dispatched attack {n}/{of} ({aid}): {preview!r}"
     if agent == "target_adapter" and action == "response":
         aid = payload.get("attack_id", "?")
         return f"Target returned a response for {aid}."
+    if agent == "judge" and action == "judge_start":
+        aid = payload.get("attack_id", "?")
+        n = payload.get("n", "?")
+        of = payload.get("of", "?")
+        return f"Judge picked up attack {n}/{of} ({aid}) for evaluation."
     if agent == "judge" and action == "verdict":
         v = payload.get("verdict", "?")
         c = payload.get("confidence", "?")

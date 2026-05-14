@@ -80,11 +80,15 @@
 <ol class="space-y-3">
   {% for r in audit_rows %}
   <li class="panel p-4 flex items-start gap-3">
-    <span class="font-mono muted text-xs whitespace-nowrap">#{{ r.rowid_seq }}</span>
+    <span class="font-mono text-sm whitespace-nowrap" style="min-width: 3rem;" title="Event {{ r.local_index }} of {{ audit_rows|length }} in this campaign (global audit row #{{ r.rowid_seq }})">#{{ r.local_index }}</span>
     <span class="agent-badge agent-{{ r.agent }}">{{ r.agent }}</span>
     <div class="flex-1">
       <div class="text-sm">{{ r.narrative }}</div>
-      <div class="text-xs muted mt-1">{{ r.occurred_at }} &middot; <code>{{ r.action }}</code></div>
+      <div class="text-xs muted mt-1">
+        {{ r.occurred_at }}
+        &middot; <code>{{ r.action }}</code>
+        &middot; <span title="Position in the global, hash-chained audit log">global #{{ r.rowid_seq }}</span>
+      </div>
       {% if r.payload and r.payload.attack_id %}
       <a class="text-xs" href="/attacks/{{ r.payload.attack_id }}">view attack {{ r.payload.attack_id }}</a>
       {% endif %}

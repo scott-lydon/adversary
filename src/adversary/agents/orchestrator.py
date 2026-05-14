@@ -335,12 +335,33 @@ class OrchestratorAgent:
 
         # 1) RedTeam queue -> attacks
         red_queue: "list[Attack]" = []
+        rt_model = (
+            self.red_team.provider.models.get("red_team")
+            if hasattr(self.red_team.provider, "models")
+            else getattr(self.red_team.provider, "name", "scripted")
+        )
         await self._emit(
             "red_team_start",
             campaign_id=campaign_id,
-            model=self.red_team.provider.models.get("red_team")
-            if hasattr(self.red_team.provider, "models")
-            else getattr(self.red_team.provider, "name", "scripted"),
+            model=rt_model,
+        )
+        # Persist red_team_start so the campaign timeline shows the Red Team
+        # was kicked off (not just that attacks magically appeared). Without
+        # this the timeline skips from campaign_start to attack_generated and
+        # the dashboard hides the strategic-planning step.
+        self.store.append_audit(
+            agent="red_team",
+            action="red_team_start",
+            payload={
+                "campaign_id": campaign_id,
+                "model": rt_model,
+                "category": category.value,
+                "subcategory": subcategory,
+                "max_attacks": brief.max_attacks,
+                "target_id": self.target_id,
+                "target_name": self.target_name,
+            },
+            occurred_at=_utcnow(),
         )
         attacks = await self.red_team.generate(brief)
         red_queue.extend(attacks)
@@ -377,6 +398,9 @@ class OrchestratorAgent:
         )
         responses_q: list[tuple[Attack, TargetResponse]] = []
         for attack_idx, attack in enumerate(red_queue):
+            preview_text = (
+                attack.prompt_sequence[0].text if attack.prompt_sequence else ""
+            )
             await self._emit(
                 "target_send",
                 campaign_id=campaign_id,
@@ -386,9 +410,25 @@ class OrchestratorAgent:
                 # Full prompt text — the template wraps long lines instead of
                 # truncating, so we send everything. The 50-word cap in the
                 # red_team prompt keeps this bounded.
-                preview=attack.prompt_sequence[0].text
-                if attack.prompt_sequence
-                else "",
+                preview=preview_text,
+            )
+            # Persist target_send so the campaign timeline shows each attack
+            # being dispatched separately from the response landing. Without
+            # this, the timeline jumps straight from `attack_generated` to
+            # `response` and hides the in-flight latency window.
+            self.store.append_audit(
+                agent="target_adapter",
+                action="target_send",
+                payload={
+                    "campaign_id": campaign_id,
+                    "attack_id": attack.attack_id,
+                    "n": attack_idx + 1,
+                    "of": len(red_queue),
+                    "preview": preview_text[:240],
+                    "target_id": self.target_id,
+                    "target_name": self.target_name,
+                },
+                occurred_at=_utcnow(),
             )
             response = await self.adapter.send_multi_turn(
                 session, attack.prompt_sequence
@@ -465,6 +505,23 @@ class OrchestratorAgent:
                 attack_id=attack.attack_id,
                 n=judge_idx + 1,
                 of=len(responses_q),
+            )
+            # Persist judge_start so the timeline differentiates "Judge
+            # picked up attack N" from "Judge returned verdict N" — useful
+            # for diagnosing slow Judge runs (latency between this row and
+            # the following `verdict` row is the per-call inference time).
+            self.store.append_audit(
+                agent="judge",
+                action="judge_start",
+                payload={
+                    "campaign_id": campaign_id,
+                    "attack_id": attack.attack_id,
+                    "n": judge_idx + 1,
+                    "of": len(responses_q),
+                    "target_id": self.target_id,
+                    "target_name": self.target_name,
+                },
+                occurred_at=_utcnow(),
             )
             verdict = await self.judge.evaluate(
                 attack=attack,
