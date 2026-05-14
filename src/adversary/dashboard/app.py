@@ -221,7 +221,7 @@ _AUTO_MINT_PURPOSES: tuple[str, ...] = (
     "chart_error_scan",
     "follow_up_question",
 )
-_AUTO_MINT_DEFAULT_PATIENT_ID = "1"
+_AUTO_MINT_DEFAULT_PATIENT_ID = "barbara-boston-001"
 _AUTO_MINT_PLACEHOLDER_SIGNING_KEY = "change-me-to-a-32-byte-hex-string"
 
 _TOKEN_CACHE: dict[tuple[str, str, str], tuple[str, float]] = {}

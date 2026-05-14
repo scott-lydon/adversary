@@ -262,11 +262,14 @@
     </label>
     <label class="block md:col-span-2">
       <span class="text-xs uppercase muted tracking-wider">
-        Patient id{% if target.kind == 'clinical_copilot' %} (defaults to 1 if blank){% endif %}
+        Patient id{% if target.kind == 'clinical_copilot' %} (pre-filled with a seeded patient){% endif %}
       </span>
       <input type="text" name="patient_id"
-             {% if target.kind == 'clinical_copilot' %}placeholder="1"{% else %}placeholder="Patient/87413"{% endif %}
+             {% if target.kind == 'clinical_copilot' %}value="barbara-boston-001"{% else %}placeholder="Patient/87413"{% endif %}
              class="w-full p-2 mt-1 font-mono text-xs" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+      {% if target.kind == 'clinical_copilot' %}
+      <span class="text-xs muted mt-1 block">Seeded patients on this target: <code>barbara-boston-001</code> (gout), <code>suzie-sanchez-002</code> (osteoporosis), <code>demo-patient-099</code> (penicillin allergy). The sidecar's task token is scoped to one patient at a time.</span>
+      {% endif %}
     </label>
     {% endif %}
     <div class="md:col-span-2 flex items-center gap-3 mt-2">

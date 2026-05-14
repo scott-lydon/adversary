@@ -4,7 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Adversary {% block title %}{% endblock %}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!--
+    Tailwind: precompiled CSS file via jsdelivr (cached at the CDN edge,
+    cacheable by the browser, ~2MB gzipped). This replaces
+    `<script src="https://cdn.tailwindcss.com">` which is the JIT-compiler
+    CDN explicitly documented as "for prototyping, not production" — it
+    re-runs in the browser on every page load and adds 2-5s of perceived
+    latency per navigation. The precompiled file loads once and caches.
+  -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
   {% block head_extra %}{% endblock %}
   <style>
     :root {
