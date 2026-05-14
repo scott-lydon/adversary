@@ -55,6 +55,19 @@
            class="text-xs muted mt-1 font-mono leading-relaxed"
            style="word-break: break-word; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden; max-height: 7em;">
       </div>
+      <!--
+        "Currently waiting on" line. Adversary is target-agnostic, so we
+        deliberately do NOT show per-target internal steps (clicks, node
+        names, sub-spans). What adversary DOES know precisely is when it
+        handed work to a downstream actor and is now blocked waiting for
+        the reply. That gap (between *_start and *_done events) is what
+        this line surfaces. It hides as soon as the matching end event
+        arrives, or the terminal event lands.
+      -->
+      <div id="waiting-label"
+           class="text-xs mt-1 hidden"
+           style="color: var(--accent); font-style: italic;">
+      </div>
     </div>
     <div id="progress-meta" class="text-sm muted shrink-0 whitespace-nowrap">0 / {{ expected_attacks }} attacks</div>
   </div>
@@ -109,6 +122,43 @@ const elDone     = document.getElementById("done-banner");
 const elDoneS    = document.getElementById("done-summary");
 const elErr      = document.getElementById("error-banner");
 const elErrMsg   = document.getElementById("error-message");
+const elWait     = document.getElementById("waiting-label");
+
+// Map from a "we just sent work somewhere" event to (the playful label
+// to show while waiting, the event kind that ends the wait). The
+// labels are deliberately target-agnostic: we do not pretend to know
+// what the target is doing internally (a target could be HTTP, a
+// browser session, an SSH shell — none of which surface their own
+// progress). What we DO know is that we just sent something and are
+// blocked on a reply.
+const WAITING_LABELS_BY_KIND = {
+  red_team_start:      { text: "Red Team brainstorming attacks…",          endKind: "red_team_done" },
+  target_send:         { text: "Tap-dancing through the target…",          endKind: "target_response" },
+  judge_start:         { text: "Judge reading the response…",              endKind: "judge_done" },
+  documentation_start: { text: "Documentation drafting the exploit report…", endKind: "documentation_done" },
+};
+
+// Same idea for the startup phase: when a "*_start" step lands inside
+// the `startup` event family, we know we are blocked until a matching
+// "*_done" / "*_ok" step lands. Surfacing this fills the auto-mint
+// gap that previously looked like the page was frozen.
+const WAITING_LABELS_BY_STARTUP_STEP = {
+  auto_mint_start:       { text: "Minting a fresh task token…",                            endStep: "auto_mint_done" },
+  token_preflight_start: { text: "Pinging the target with the new token to confirm it…",   endStep: "token_preflight_ok" },
+  loading_provider:      { text: "Spinning up the provider runtime (cold-importing libs)…", endStep: "build_provider" },
+  open_adapter:          { text: "Opening a session with the target…",                     endStep: "build_provider" },
+};
+
+let currentWait = null;  // { type: "kind"|"startup", end: <string> } | null
+function setWait(text) {
+  elWait.textContent = text;
+  elWait.classList.remove("hidden");
+}
+function clearWait() {
+  currentWait = null;
+  elWait.textContent = "";
+  elWait.classList.add("hidden");
+}
 
 let attacksDone = 0;
 let totalEvents = 0;
@@ -238,6 +288,34 @@ function appendEvent(ev) {
     lastCost = ev.dollar_cost;
     elCost.textContent = `cost: $${lastCost.toFixed(4)}`;
   }
+
+  // "Currently waiting on …" line maintenance. Two rules:
+  //
+  //   1. If `ev` is one of the kinds we know starts a wait, set the
+  //      waiting label and remember which end-event closes it.
+  //   2. If `ev` matches the end event for the active wait, clear it.
+  //
+  // A later start replaces an earlier one: in the current sequential
+  // pipeline (red_team → target → judge → documentation) only one is
+  // ever in flight at a time, so this is correct. If we go parallel
+  // later, swap currentWait for a stack.
+  if (ev.kind === "startup" && typeof ev.step === "string") {
+    const startMeta = WAITING_LABELS_BY_STARTUP_STEP[ev.step];
+    if (startMeta) {
+      currentWait = { type: "startup", end: startMeta.endStep };
+      setWait(startMeta.text);
+    } else if (currentWait && currentWait.type === "startup" && ev.step === currentWait.end) {
+      clearWait();
+    }
+  } else {
+    const startMeta = WAITING_LABELS_BY_KIND[ev.kind];
+    if (startMeta) {
+      currentWait = { type: "kind", end: startMeta.endKind };
+      setWait(startMeta.text);
+    } else if (currentWait && currentWait.type === "kind" && ev.kind === currentWait.end) {
+      clearWait();
+    }
+  }
 }
 
 const es = new EventSource(`/scans/${scanId}/events`);
@@ -248,9 +326,11 @@ es.onmessage = (e) => {
 
   if (ev.kind === "terminal") {
     es.close();
-    // Hide the activity pulse: nothing more is happening either way.
+    // Hide the activity pulse and the waiting label: nothing more is
+    // happening either way.
     const pulse = document.getElementById("activity-pulse");
     if (pulse) pulse.style.display = "none";
+    clearWait();
     if (ev.error) {
       elBar.style.width = "100%";
       elBar.style.background = "var(--bad)";
