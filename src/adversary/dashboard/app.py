@@ -362,6 +362,84 @@ async def _mint_token_via_ssh(
     return token
 
 
+async def _preflight_validate_token(
+    *,
+    base_url: str,
+    task_token: str,
+    patient_id: str,
+) -> str | None:
+    """Probe the target's /chat with the resolved task token.
+
+    Returns None on success, or a human-readable error string naming the
+    specific failure shape on rejection. Caller wires the string straight
+    into the ScanJob's error field so the user sees it on the scan-progress
+    page instead of losing it inside the orchestrator's first /chat call.
+
+    The probe sends a deliberately benign healthcheck-shaped message that
+    the sidecar's injection guard does not pattern-match against; any 401
+    therefore really is a token problem, not a guard rejection.
+    """
+    import httpx
+
+    url = f"{base_url.rstrip('/')}/chat"
+    payload = {
+        "patient_id": patient_id,
+        "purpose": "follow_up_question",
+        "message": "preflight token validation ping from dashboard",
+        "session_id": f"adv-preflight-{_uuid.uuid4().hex[:8]}",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            resp = await client.post(
+                url,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {task_token}",
+                    "Content-Type": "application/json",
+                },
+            )
+    except httpx.HTTPError as exc:
+        return (
+            f"Task token preflight failed: cannot reach {url!r} ({exc}). "
+            "Check VPN, that the sidecar container is running on the "
+            "deployment host, and that the URL in the target record is "
+            "correct."
+        )
+
+    if resp.status_code == 401:
+        return (
+            f"Task token preflight failed: sidecar at {url!r} returned 401. "
+            "This almost always means the COPILOT_BFF_JWT_SIGNING_KEY this "
+            "dashboard is running with does NOT match the value the sidecar "
+            "verifies against. Two fixes: (1) align the dashboard's env key "
+            "with the sidecar's value "
+            "(`ssh root@<host> 'docker exec copilot-bff env | grep "
+            "COPILOT_BFF_JWT_SIGNING_KEY'`, then update this deployment's "
+            ".env and `docker compose up -d adversary`), or (2) paste a "
+            "freshly-minted JWT into the Task token field directly. The "
+            "scan was NOT started; nothing has been billed."
+        )
+    if resp.status_code == 403:
+        return (
+            f"Task token preflight failed: sidecar at {url!r} returned 403. "
+            f"The token signature was accepted, but the patient claim "
+            f"{patient_id!r} is not authorized for this clinician+purpose "
+            "tuple. Either widen the token's `purpose_of_use` claims at "
+            "mint time, or scope the scan to a patient the token is "
+            "authorized for. The scan was NOT started."
+        )
+    if resp.status_code >= 500:
+        return (
+            f"Task token preflight inconclusive: sidecar at {url!r} returned "
+            f"{resp.status_code}. The target itself is unhealthy. Check the "
+            "sidecar container logs on the deployment host. The scan was "
+            "NOT started."
+        )
+    # 200 / 400 (guard block) / etc. all count as "the sidecar accepted the
+    # signature" — the orchestrator can take it from here.
+    return None
+
+
 async def auto_mint_task_token(
     *,
     base_url: str,
@@ -945,6 +1023,37 @@ def create_app() -> FastAPI:
                 ),
             },
         )
+
+        # Pre-flight: before spawning the background scan, prove the resolved
+        # task token actually opens /chat. If the dashboard's signing key is
+        # out of date relative to the sidecar's COPILOT_BFF_JWT_SIGNING_KEY,
+        # auto-mint will succeed (it just signs a JWT, no validation) but the
+        # very first /chat call will 401. Surfacing that here instead of
+        # mid-scan saves the user from a confusing in-flight failure and
+        # gives a specific, actionable error message.
+        if effective_task_token and record.kind == "clinical_copilot":
+            await job.emit(
+                "startup",
+                {
+                    "step": "token_preflight_start",
+                    "label": "Validating task token against /chat before kicking off scan…",
+                },
+            )
+            preflight_error = await _preflight_validate_token(
+                base_url=record.base_url,
+                task_token=effective_task_token,
+                patient_id=effective_patient_id or _AUTO_MINT_DEFAULT_PATIENT_ID,
+            )
+            if preflight_error:
+                await job.mark_done(error=preflight_error)
+                return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
+            await job.emit(
+                "startup",
+                {
+                    "step": "token_preflight_ok",
+                    "label": "Task token validated — sidecar accepted /chat call.",
+                },
+            )
 
         async def _run_in_background() -> None:
             await job.emit(
