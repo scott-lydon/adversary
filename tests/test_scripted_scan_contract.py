@@ -3,10 +3,12 @@
 These tests pin two invariants the dashboard depends on but that previously
 broke silently:
 
-1. A scripted scan must cost exactly $0. The provider does no LLM work, the
-   form dropdown literally labels it ``scripted (deterministic, offline,
-   $0)``, and any non-zero accumulation into ``spent_usd`` is a stub-data
-   bug. See BUG_PREVENTION.md C3.
+1. A scripted scan must cost exactly $0 because no LLM call was made — so
+   $0 is the REAL measurement, not a default. The general rule (see
+   feedback memory keyed "no stub data"): any number in a user-facing
+   aggregate must be the actual measurement. Zero is acceptable only when
+   zero is what was actually measured. Zero-as-default is the same crime
+   as 0.001-as-placeholder. See BUG_PREVENTION.md C3.
 
 2. ``max_campaigns`` and ``attacks_per_campaign`` are independent knobs.
    Total attacks must equal the product of the two values the operator set
@@ -33,6 +35,12 @@ from adversary.target import EchoTarget
 @pytest.mark.asyncio
 async def test_scripted_scan_costs_zero_dollars(tmp_path: Path) -> None:
     """A scan that calls no LLM must aggregate to exactly $0.
+
+    The point is not "zero is the safe default for unknown costs" — the
+    point is "no LLM call was made, so the REAL cost is $0". Zero is the
+    actual measurement here, not a fallback. If a future stub provider
+    needs a marker that work happened, it must use a non-numeric channel
+    (boolean, timestamp, model name) rather than a placeholder number.
 
     Regression guard: ScriptedProvider previously stamped ``dollar_cost=
     0.001`` on every Attack and Verdict as a "make the row populated"

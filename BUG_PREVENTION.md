@@ -35,7 +35,7 @@ showed $0 forever.
 `store.update_agent_run_totals` at the end. The helper raises if the
 placeholder row is missing — silent no-op would hide the regression.
 
-### C3. Stub providers must declare $0 cost, not a placeholder cent
+### C3. Numbers in user-facing aggregates must be the real measurement, never a default
 
 **Issue (2026-05-14).** `ScriptedProvider.red_team` stamped
 `dollar_cost=0.001` on every Attack and `ScriptedProvider.judge` stamped
@@ -45,15 +45,23 @@ spent for a scripted scan even though no LLM call was made and the
 provider dropdown literally labeled it `scripted (deterministic,
 offline, $0)`. The user reasonably read $0.01 as real money charged.
 
-**Prevention.** A pure-Python / heuristic provider MUST emit
-`dollar_cost=0.0`. Reserve non-zero `dollar_cost` for code paths that
-actually invoke a billed LLM. If a provider needs a "this happened"
-marker, use `latency_ms` or `tokens_in`/`tokens_out` — not dollars.
-Note: when the target itself calls an LLM (e.g. the Clinical Co-Pilot
-sidecar), that cost hits the operator's LLM provider bill independently
-of the adversary provider mode; the target-side cost is real and is NOT
-reflected in `spent_usd`. The Run-scan panel calls this out in plain
-language so a scripted-vs-live confusion does not recur.
+**Prevention.** Any number that propagates into a user-facing aggregate
+(cost, count, latency, score, percent, anything that gets summed,
+averaged, or charted) MUST be the real measurement. Zero is acceptable
+only when zero is what was actually measured — ScriptedProvider emits
+`dollar_cost=0.0` because no LLM was called, not as a default. Zero-as-
+default is the same failure mode as `0.001`-as-placeholder: both claim
+a measurement that was not taken. If a field needs to mark "this work
+happened" without a real numeric value, use a non-numeric channel
+(boolean, timestamp, model name string) so it cannot accidentally
+aggregate. Reserve non-zero `dollar_cost` for code paths that actually
+invoke a billed LLM. Note: when the target itself calls an LLM (e.g.
+the Clinical Co-Pilot sidecar), that cost hits the operator's LLM
+provider bill independently of the adversary provider mode; the target-
+side cost is real and is NOT reflected in `spent_usd`. The Run-scan
+panel calls this out in plain language so a scripted-vs-live confusion
+does not recur. Contract test pinning the invariant lives at
+`tests/test_scripted_scan_contract.py::test_scripted_scan_costs_zero_dollars`.
 
 ## T — Audit timeline / observability
 

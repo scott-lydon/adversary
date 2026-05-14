@@ -167,12 +167,12 @@ class ScriptedProvider:
                         else "scripted-redteam-v1",
                         prompt_version="v1.0.0",
                         # ScriptedProvider is pure-Python: no LLM call, no
-                        # tokens billed by any provider. Keep this at $0 so
-                        # the dashboard "scripted (deterministic, offline,
-                        # $0)" claim is honored end-to-end. Stub costs here
-                        # silently aggregate into spent_usd and make a free
-                        # scan look like it billed cents — see
-                        # BUG_PREVENTION.md C3.
+                        # tokens billed by any provider. $0 here is the
+                        # REAL measurement (zero work happened), not a
+                        # placeholder. Any non-zero value would be claiming
+                        # a measurement that was not taken and would roll
+                        # up into spent_usd alongside real data. See
+                        # BUG_PREVENTION.md C3 and the "no stub data" rule.
                         dollar_cost=0.0,
                         tokens_in=len(text.split()),
                         tokens_out=len(text.split()),
@@ -253,8 +253,9 @@ class ScriptedProvider:
             rubric_version=rubric.get("rubric_version", "v1.0.0"),
             judge_model="scripted-judge-v1",
             # The scripted judge is heuristic Python — no LLM call, no real
-            # billing. Anything other than 0.0 here pollutes spent_usd and
-            # contradicts the form's "$0" claim. See BUG_PREVENTION.md C3.
+            # billing. $0 is the REAL measurement here (zero work happened),
+            # not a default. Anything non-zero would claim a measurement
+            # that was not taken. See BUG_PREVENTION.md C3.
             dollar_cost=0.0,
         )
 
