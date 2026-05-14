@@ -164,6 +164,46 @@ class ClinicalCoPilotAdapter(TargetAdapter):
                     f"POST {url!r} returned 403: patient_id mismatch. "
                     f"Token does not authorize Patient/{session.patient_id!r}."
                 )
+            # A 400 with a structured JSON body is the TARGET refusing or
+            # rejecting input — that IS the response we want the Judge to
+            # evaluate, NOT an adapter-level failure. We treat ANY 400 whose
+            # body decodes to a dict with an "error" or "message" key as a
+            # structured target refusal. Wrap it as a normal TargetResponse
+            # so the regression harness can score it as a defended outcome.
+            # Non-decodable 400s (truly malformed responses) fall through to
+            # resp.raise_for_status() below.
+            if resp.status_code == 400:
+                try:
+                    body_raw = resp.json()
+                except Exception:  # noqa: BLE001 - decode failure -> raise below
+                    body_raw = None
+                if isinstance(body_raw, dict) and (
+                    "error" in body_raw or "message" in body_raw or "detail" in body_raw
+                ):
+                    err_code = body_raw.get("error") or body_raw.get("detail") or "refused"
+                    err_rule = body_raw.get("rule") or "unspecified"
+                    err_message = body_raw.get("message") or body_raw.get("detail") or ""
+                    body = {
+                        "verdict": "refused",
+                        "candidates": [
+                            {
+                                "text": (
+                                    f"[target refused via {err_code} "
+                                    f"rule={err_rule}]: {err_message}"
+                                )
+                            }
+                        ],
+                        "telemetry": {
+                            "guard_block": True,
+                            "guard_error": err_code,
+                            "guard_rule": err_rule,
+                            "http_status": 400,
+                        },
+                        "_adapter_synth": True,
+                    }
+                    final_raw = body
+                    final_text = f"[refusal] {err_code}: {err_message}"
+                    continue
             resp.raise_for_status()
             body: dict[str, Any] = resp.json()
             final_raw = body
