@@ -23,12 +23,33 @@
     not push the rest of the page around. Hover or focus reveals
     overflow via tooltip on `progress-label-wrap`.
   -->
+  <!--
+    Activity pulse is visible from the moment the DOM renders so the user
+    always sees motion while the scan is in flight, even before the first
+    SSE event arrives. It hides in the terminal-event handler below
+    (success or error). Animation is pure CSS so it works before any
+    JavaScript runs. Without this the page sat with a static "Spinning up
+    the orchestrator" label for several seconds while real work happened
+    silently — see BUG_PREVENTION.md U1.
+  -->
+  <style>
+    @keyframes adversary-pulse {
+      0%, 100% { opacity: 0.25; transform: scale(0.85); }
+      50%      { opacity: 1;    transform: scale(1.15); }
+    }
+    #activity-pulse {
+      animation: adversary-pulse 1.4s ease-in-out infinite;
+    }
+  </style>
   <div class="flex items-start justify-between mb-3 gap-4">
     <div id="progress-label-wrap" class="flex-1 min-w-0" style="min-height: 3.5rem;">
       <div id="progress-label"
            class="text-base font-medium leading-snug"
            style="word-break: break-word; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;">
-        Spinning up the orchestrator
+        <span id="activity-pulse"
+              class="inline-block rounded-full align-middle mr-2"
+              style="width: 0.6rem; height: 0.6rem; background: var(--accent); vertical-align: middle;"
+              aria-hidden="true"></span>Spinning up the orchestrator
       </div>
       <div id="progress-detail"
            class="text-xs muted mt-1 font-mono leading-relaxed"
@@ -190,7 +211,12 @@ function appendEvent(ev) {
   elLog.prepend(li);
 
   if (LABEL_FOR_KIND[ev.kind]) {
-    elLabel.textContent = label;
+    // Re-attach the activity pulse so it survives the textContent overwrite.
+    // Without this the pulse vanishes the moment the first event lands.
+    const pulse = document.getElementById("activity-pulse");
+    elLabel.textContent = "";
+    if (pulse) elLabel.appendChild(pulse);
+    elLabel.appendChild(document.createTextNode(label));
     // Secondary detail line: payload-derived "more text the user wants
     // to read" for the current step. Cleared when an event has no detail
     // so a stale preview from a previous attack does not linger.
@@ -222,6 +248,9 @@ es.onmessage = (e) => {
 
   if (ev.kind === "terminal") {
     es.close();
+    // Hide the activity pulse: nothing more is happening either way.
+    const pulse = document.getElementById("activity-pulse");
+    if (pulse) pulse.style.display = "none";
     if (ev.error) {
       elBar.style.width = "100%";
       elBar.style.background = "var(--bad)";

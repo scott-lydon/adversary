@@ -1030,130 +1030,143 @@ def create_app() -> FastAPI:
             },
         )
 
-        # Run auto-mint inline with explicit start/done events. For env-based
-        # signing this is millisecond-fast; for the SSH fallback path it can
-        # take 2-4s while the dashboard shells out to docker exec.
-        await job.emit(
-            "startup",
-            {
-                "step": "auto_mint_start",
-                "label": (
-                    "Resolving task token (env-signing if "
-                    "COPILOT_BFF_JWT_SIGNING_KEY is set, else SSH to BFF)…"
-                ),
-            },
-        )
-        try:
-            effective_task_token, effective_patient_id = await _resolve_copilot_auth(
-                target_kind=record.kind,
-                base_url=record.base_url,
-                task_token=task_token,
-                patient_id=patient_id,
-            )
-        except AutoMintError as exc:
-            await job.mark_done(
-                error=(
-                    f"auto-mint of task token for {name!r} failed: {exc}. "
-                    "Manual fallback: run `adversary debug mint-task-token "
-                    f"--user-id you --patient-id "
-                    f"{patient_id.strip() or _AUTO_MINT_DEFAULT_PATIENT_ID} "
-                    "--remote-host root@<host> --bff-container copilot-bff` "
-                    "and paste the JWT into the Task token field."
-                )
-            )
-            return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
-        await job.emit(
-            "startup",
-            {
-                "step": "auto_mint_done",
-                "label": (
-                    "Task token ready"
-                    if effective_task_token
-                    else "No task token needed for this target"
-                ),
-            },
-        )
-
-        # Pre-flight: before spawning the background scan, prove the resolved
-        # task token actually opens /chat. If the dashboard's signing key is
-        # out of date relative to the sidecar's COPILOT_BFF_JWT_SIGNING_KEY,
-        # auto-mint will succeed (it just signs a JWT, no validation) but the
-        # very first /chat call will 401. Surfacing that here instead of
-        # mid-scan saves the user from a confusing in-flight failure and
-        # gives a specific, actionable error message.
-        #
-        # Self-heal: if preflight 401's AND the token came from auto-mint
-        # (caller passed task_token=""), the in-memory token cache is
-        # holding a token signed against a now-stale key. Evict and retry
-        # the mint+preflight once before reporting failure. This makes a
-        # signing-key rotation on the sidecar a zero-touch event for the
-        # dashboard instead of requiring a container restart.
-        if effective_task_token and record.kind == "clinical_copilot":
-            preflight_patient_id = effective_patient_id or _AUTO_MINT_DEFAULT_PATIENT_ID
+        # Run auto-mint, preflight, AND the scan body inside a single
+        # background task so the POST handler returns the 303 in the time
+        # it takes FastAPI to write a redirect header (~50ms). Previously
+        # auto-mint + preflight were awaited inline, so the browser sat
+        # for 1-4 seconds before navigating to /scans/{id}. The user
+        # cannot tell the difference between "the system is thinking" and
+        # "the system is dead" until something moves on screen. Pushing
+        # everything to a background task means /scans/{id} renders
+        # immediately, the page starts streaming SSE, and the user sees
+        # each step (auto_mint_start, token_preflight_start, etc.) as it
+        # happens rather than after the fact.
+        async def _full_pipeline() -> None:
+            # Auto-mint. For env-based signing this is millisecond-fast;
+            # for the SSH fallback path it can take 2-4s while the
+            # dashboard shells out to docker exec. Either way, the user
+            # sees auto_mint_start the moment they land on the progress
+            # page.
             await job.emit(
                 "startup",
                 {
-                    "step": "token_preflight_start",
-                    "label": "Validating task token against /chat before kicking off scan…",
+                    "step": "auto_mint_start",
+                    "label": (
+                        "Resolving task token (env-signing if "
+                        "COPILOT_BFF_JWT_SIGNING_KEY is set, else SSH to BFF)…"
+                    ),
                 },
             )
-            preflight_error = await _preflight_validate_token(
-                base_url=record.base_url,
-                task_token=effective_task_token,
-                patient_id=preflight_patient_id,
+            try:
+                effective_task_token, effective_patient_id = await _resolve_copilot_auth(
+                    target_kind=record.kind,
+                    base_url=record.base_url,
+                    task_token=task_token,
+                    patient_id=patient_id,
+                )
+            except AutoMintError as exc:
+                await job.mark_done(
+                    error=(
+                        f"auto-mint of task token for {name!r} failed: {exc}. "
+                        "Manual fallback: run `adversary debug mint-task-token "
+                        f"--user-id you --patient-id "
+                        f"{patient_id.strip() or _AUTO_MINT_DEFAULT_PATIENT_ID} "
+                        "--remote-host root@<host> --bff-container copilot-bff` "
+                        "and paste the JWT into the Task token field."
+                    )
+                )
+                return
+            await job.emit(
+                "startup",
+                {
+                    "step": "auto_mint_done",
+                    "label": (
+                        "Task token ready"
+                        if effective_task_token
+                        else "No task token needed for this target"
+                    ),
+                },
             )
-            token_was_auto_minted = not task_token.strip()
-            if (
-                preflight_error
-                and "returned 401" in preflight_error
-                and token_was_auto_minted
-            ):
+
+            # Pre-flight: before spawning the background scan, prove the
+            # resolved task token actually opens /chat. If the dashboard's
+            # signing key is out of date relative to the sidecar's
+            # COPILOT_BFF_JWT_SIGNING_KEY, auto-mint will succeed (it just
+            # signs a JWT, no validation) but the very first /chat call
+            # will 401. Surfacing that here instead of mid-scan saves the
+            # user from a confusing in-flight failure and gives a
+            # specific, actionable error message.
+            #
+            # Self-heal: if preflight 401's AND the token came from
+            # auto-mint (caller passed task_token=""), the in-memory
+            # token cache is holding a token signed against a now-stale
+            # key. Evict and retry the mint+preflight once before
+            # reporting failure. This makes a signing-key rotation on
+            # the sidecar a zero-touch event for the dashboard instead
+            # of requiring a container restart.
+            if effective_task_token and record.kind == "clinical_copilot":
+                preflight_patient_id = effective_patient_id or _AUTO_MINT_DEFAULT_PATIENT_ID
                 await job.emit(
                     "startup",
                     {
-                        "step": "token_cache_evict",
-                        "label": (
-                            "Preflight 401 with an auto-minted token — evicting "
-                            "the in-process token cache and re-minting once "
-                            "(signing-key rotation auto-heal)."
-                        ),
+                        "step": "token_preflight_start",
+                        "label": "Validating task token against /chat before kicking off scan…",
                     },
                 )
-                await _evict_token_cache_entry(
-                    base_url=record.base_url, patient_id=preflight_patient_id
-                )
-                try:
-                    effective_task_token = await auto_mint_task_token(
-                        base_url=record.base_url, patient_id=preflight_patient_id
-                    )
-                except AutoMintError as exc:
-                    await job.mark_done(
-                        error=(
-                            f"auto-mint retry after cache evict failed: {exc}. "
-                            "Check that COPILOT_BFF_JWT_SIGNING_KEY in this "
-                            "deployment's env matches the sidecar's value."
-                        )
-                    )
-                    return RedirectResponse(
-                        url=f"/scans/{scan_id}", status_code=303
-                    )
                 preflight_error = await _preflight_validate_token(
                     base_url=record.base_url,
                     task_token=effective_task_token,
                     patient_id=preflight_patient_id,
                 )
-            if preflight_error:
-                await job.mark_done(error=preflight_error)
-                return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
-            await job.emit(
-                "startup",
-                {
-                    "step": "token_preflight_ok",
-                    "label": "Task token validated — sidecar accepted /chat call.",
-                },
-            )
+                token_was_auto_minted = not task_token.strip()
+                if (
+                    preflight_error
+                    and "returned 401" in preflight_error
+                    and token_was_auto_minted
+                ):
+                    await job.emit(
+                        "startup",
+                        {
+                            "step": "token_cache_evict",
+                            "label": (
+                                "Preflight 401 with an auto-minted token — evicting "
+                                "the in-process token cache and re-minting once "
+                                "(signing-key rotation auto-heal)."
+                            ),
+                        },
+                    )
+                    await _evict_token_cache_entry(
+                        base_url=record.base_url, patient_id=preflight_patient_id
+                    )
+                    try:
+                        effective_task_token = await auto_mint_task_token(
+                            base_url=record.base_url, patient_id=preflight_patient_id
+                        )
+                    except AutoMintError as exc:
+                        await job.mark_done(
+                            error=(
+                                f"auto-mint retry after cache evict failed: {exc}. "
+                                "Check that COPILOT_BFF_JWT_SIGNING_KEY in this "
+                                "deployment's env matches the sidecar's value."
+                            )
+                        )
+                        return
+                    preflight_error = await _preflight_validate_token(
+                        base_url=record.base_url,
+                        task_token=effective_task_token,
+                        patient_id=preflight_patient_id,
+                    )
+                if preflight_error:
+                    await job.mark_done(error=preflight_error)
+                    return
+                await job.emit(
+                    "startup",
+                    {
+                        "step": "token_preflight_ok",
+                        "label": "Task token validated — sidecar accepted /chat call.",
+                    },
+                )
 
-        async def _run_in_background() -> None:
             await job.emit(
                 "startup",
                 {
@@ -1234,7 +1247,10 @@ def create_app() -> FastAPI:
             finally:
                 inner_store.close()
 
-        asyncio.create_task(_run_in_background())
+        # Fire-and-forget: the pipeline now owns auto-mint, preflight,
+        # self-heal, and scan execution. The handler returns 303 in the
+        # time it takes FastAPI to write the redirect header.
+        asyncio.create_task(_full_pipeline())
         return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
 
     @app.get("/scans/{scan_id}", response_class=HTMLResponse)
