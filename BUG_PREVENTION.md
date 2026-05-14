@@ -319,6 +319,33 @@ campaign` input and the orchestrator no longer carries a hardcoded
 does this multiply against, and is that visible to the operator
 filling out the form?
 
+### U6. Never nest an animated element inside a text container
+
+**Issue (2026-05-14).** The scan-progress headline div had an
+animated pulse `<span>` nested inside it. The user reported ghosted /
+double-struck letters in the headline ("Validating task token against
+/chat before kicking off scan…" rendered with what looked like a
+1-pixel horizontal shadow on every glyph). Two rounds of fixes that
+changed only the animation properties (drop `transform`, keep
+`opacity`) did not solve it.
+
+Root cause: any animated descendant — `transform`, `opacity`,
+`filter`, anything compositor-bound — promotes the containing block
+to its own GPU layer. Text rendered on a compositor layer loses the
+host OS's subpixel antialiasing pipeline. The replacement
+antialiasing reads as a faint double-strike on every letter. Removing
+the animated property entirely fixes it; changing the property does
+not, because any compositor hint triggers the same promotion.
+
+**Prevention.** Animated elements (pulses, spinners, shimmer bars,
+loading dots) live as flex/grid siblings of the text they decorate,
+never as descendants. The scan-progress headline now keeps the pulse
+as a `flex-row` sibling of the label-wrap, so the headline div has
+zero animated children and its text renders on the main paint layer.
+If you later add a "Loading…" spinner, a typing indicator, or any
+other in-flight visual, put it in a sibling slot — never inline
+inside the text container.
+
 ### U3. Default LLM `max_tokens` caps must be sized for real outputs
 
 **Issue (2026-05-13).** Default caps (red_team=4000, judge=800,

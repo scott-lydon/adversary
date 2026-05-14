@@ -51,15 +51,27 @@
       animation: adversary-pulse 1.4s ease-in-out infinite;
     }
   </style>
-  <div class="flex items-start justify-between mb-3 gap-4">
+  <div class="flex items-start justify-between mb-3 gap-3">
+    <!--
+      Pulse lives at the flex-row level, NOT inside #progress-label.
+      An earlier version nested it inside the headline and the user
+      reported ghosted / double-struck text. Root cause: any animated
+      descendant (opacity, transform, anything else compositor-bound)
+      promotes the containing block onto its own GPU layer, and text
+      rendered on a compositor layer loses subpixel antialiasing. The
+      cure is structural — the headline div now contains plain text
+      and no animated children, so the compositor never touches the
+      headline. See BUG_PREVENTION.md U6.
+    -->
+    <span id="activity-pulse"
+          class="inline-block rounded-full shrink-0"
+          style="width: 0.6rem; height: 0.6rem; background: var(--accent); margin-top: 0.5rem;"
+          aria-hidden="true"></span>
     <div id="progress-label-wrap" class="flex-1 min-w-0" style="min-height: 3.5rem;">
       <div id="progress-label"
            class="text-base font-medium leading-snug"
            style="word-break: break-word; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;">
-        <span id="activity-pulse"
-              class="inline-block rounded-full align-middle mr-2"
-              style="width: 0.6rem; height: 0.6rem; background: var(--accent); vertical-align: middle;"
-              aria-hidden="true"></span>Spinning up the orchestrator
+        Spinning up the orchestrator
       </div>
       <div id="progress-detail"
            class="text-xs muted mt-1 font-mono leading-relaxed"
@@ -308,12 +320,9 @@ function appendEvent(ev) {
   elLog.prepend(li);
 
   if (LABEL_FOR_KIND[ev.kind]) {
-    // Re-attach the activity pulse so it survives the textContent overwrite.
-    // Without this the pulse vanishes the moment the first event lands.
-    const pulse = document.getElementById("activity-pulse");
-    elLabel.textContent = "";
-    if (pulse) elLabel.appendChild(pulse);
-    elLabel.appendChild(document.createTextNode(label));
+    // Pulse now lives outside this div as a flex sibling, so we can
+    // assign textContent directly without losing the indicator.
+    elLabel.textContent = label;
     // Secondary detail line: payload-derived "more text the user wants
     // to read" for the current step. Cleared when an event has no detail
     // so a stale preview from a previous attack does not linger.
