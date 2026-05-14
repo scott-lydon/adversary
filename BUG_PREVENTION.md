@@ -404,3 +404,113 @@ update the row to the real value the moment the work that produces it
 completes (see `update_agent_run_totals`). A regression test should
 assert no `agent_runs.model_name` row equals `"live"` after the
 campaign finishes.
+
+## T — Audit timeline / observability (continued)
+
+### T2. Events emitted only to the live SSE stream must also be persisted
+
+**Issue (2026-05-14).** The campaign detail page's Audit timeline showed
+about 16 rows for a 5-attack campaign and looked sparse. The
+scan-progress page, by contrast, showed a much richer fly-by of
+`red_team_start`, `target_send`, `judge_start`, and the
+`documentation_*` events. Root cause: those fine-grained events were
+emitted only to the SSE stream and never written to `audit_log`, so a
+viewer reading the timeline after the campaign ended saw a fraction of
+what a live viewer had seen.
+
+**Prevention.** Anything an operator can read on a live page must also
+be persisted. Either (a) every event the SSE stream emits also writes
+an `audit_log` row, or (b) the page is honest about being live-only and
+links to a separate persistent log. The first form is preferred — it
+makes the timeline tamper-evident along with the rest of the chain. New
+agent activity that goes only to SSE must come with a matching
+`store.append_audit` call and a narrative case in
+`dashboard.app._narrative_for_audit`.
+
+## U — UX during long or multi-step operations (continued)
+
+### U4. Decorative trailing ellipses imply truncation that is not real
+
+**Issue (2026-05-14).** Scan-progress labels carried a decorative `…`
+at the end of every line even after the underlying string had been
+widened to fit. A careful reader saw the ellipsis and assumed there was
+more content being hidden, so the visible widening did not register as
+"this is the whole label." User reported "the ellipses is still there
+in the progress updates."
+
+**Prevention.** Do not append a decorative `…` to a label. The
+ellipsis glyph is reserved for genuine reversible truncation (tooltip,
+expand-on-click). If the string is already complete, the line ends
+with whatever real punctuation belongs there. Strip trailing
+ellipses (both the single character `…` and the three-dot form
+`...`) from any server- or client-side label string before render.
+
+### U5. Multi-line labels need a clamp plus a min-height floor, with a separate detail row for the long body
+
+**Issue (2026-05-14).** The fly-by progress label was a single line
+clipped to one row, so an operator reading at speed could not see the
+full attack prompt or the model response that flew past. User asked
+that more space be given so a fast reader could catch more. Naively
+removing the clamp made the page jump every time a longer string
+arrived.
+
+**Prevention.** For a fly-by label that holds variable-length content:
+use `-webkit-line-clamp: 4` (or higher) for the headline together with
+a `min-height` floor so the layout does not jump as content swaps in
+and out, AND render a separate monospace detail row underneath that
+carries the long body (full attack prompt on `target_send`, full
+response text on `target_response`, judge evidence snippet on
+`judge_done`, etc.). Wire the detail row in JS off the same event the
+headline reads from, so they never drift.
+
+## D — Data wiring / dashboard (continued)
+
+### D2. Global sequence numbers should be re-indexed locally for single-context viewers
+
+**Issue (2026-05-14).** The campaign detail page rendered audit rows
+with their global sequence ids (`#378`, `#379`, ..., `#394`). For a
+viewer reading one campaign the starting number looked random and the
+total count was not obvious. User asked what those numbers meant.
+
+**Prevention.** When a page is scoped to a single context (one
+campaign, one target, one user session) and renders rows from a
+globally-sequenced source, show the **local** position as the primary
+display ("Event 1 of 28", "Event 2 of 28") and the global id as a
+smaller cross-reference underneath each row. Power users who need to
+cross-check against the chain still have it; the typical reader sees a
+sensible 1..N range. Applies to any future per-scope view layered on
+the same global sequence.
+
+## DB — Dashboard production-readiness (continued)
+
+### DB5. Paginate any list that could grow unboundedly
+
+**Issue (2026-05-14).** The `/audit` page rendered the most recent 200
+rows with no header, no cursor, and no indication that older rows
+existed. The audit chain was 394 rows deep at the time; row #1 was
+unreachable from the dashboard. Silent `LIMIT 200` would have hidden
+arbitrarily-large history as the platform aged.
+
+**Prevention.** Any list view backed by a table that can grow without
+bound must (a) show a "rows X..Y of N total" header, (b) expose
+`← Newer` / `Older →` cursor links keyed off the table's monotonic id,
+and (c) never silently `LIMIT` without surfacing the cap. A unit test
+should assert the page header includes the total row count and that
+walking the cursor reaches row #1 in a seeded fixture.
+
+### DB6. Token / credential caches must self-heal on the first 401
+
+**Issue (2026-05-14).** A signing-key change on the sidecar left the
+dashboard's in-process token cache holding a `(base_url, patient_id)
+→ stale_jwt` entry. Every scan preflight failed 401 until the
+container was restarted. The user saw the same error repeatedly with
+no path forward from the UI.
+
+**Prevention.** When a preflight call fails with 401 against an
+auto-minted token, evict that cache entry, re-mint once, and retry the
+preflight before surfacing the error to the user. Only the second
+failure becomes a user-visible 401 — and it names "signing-key
+mismatch" as the likely cause, not a generic auth error. Same pattern
+applies to any other credential cache (API keys, OAuth bearer tokens,
+session cookies) where rotation on the upstream side is possible:
+first 401 means refresh, second 401 means fail loud.
