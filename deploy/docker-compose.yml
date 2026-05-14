@@ -42,17 +42,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-    # Attach to the Clinical Co-Pilot stack's network so the Target
-    # Adapter can resolve `copilot-sidecar` / `copilot-bff` by container
-    # DNS name. Without this, hitting the sidecar requires going through
-    # the public IP, which hairpins back through the Hetzner box's
-    # bridge and fails (the box has no NAT loopback). The Co-Pilot stack
-    # owns the network; we declare it `external: true` so docker compose
-    # does not try to manage its lifecycle.
-    networks:
-      - default
-      - clinical_copilot
-
     volumes:
       # adversary.db lives here so a `docker compose down && up` does NOT
       # wipe campaign history, audit log, or registered targets.
@@ -72,14 +61,3 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
-
-# `clinical_copilot` is the Co-Pilot stack's docker-compose default
-# network. The `name:` line below pins the actual docker network name
-# created by `/opt/clinical-copilot/docker-compose.yml` (which uses
-# `name: clinical-copilot`, so docker creates `clinical-copilot_default`).
-# Marking it external means this stack joins the existing network rather
-# than creating a new one.
-networks:
-  clinical_copilot:
-    external: true
-    name: clinical-copilot_default

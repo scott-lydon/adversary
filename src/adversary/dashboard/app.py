@@ -419,23 +419,11 @@ async def _preflight_validate_token(
                 },
             )
     except httpx.HTTPError as exc:
-        # Always include the exception class plus repr so the message is
-        # never reduced to empty parens. httpx.ConnectError / ConnectTimeout
-        # routinely carry an empty str(exc); without the class name a
-        # reviewer staring at "cannot reach 'http://...' ()" has no signal
-        # whether it is DNS, refused, timed out, or TLS. See feedback
-        # memory on comprehensive error reporting.
         return (
-            f"Task token preflight failed: cannot reach {url!r} "
-            f"({type(exc).__name__}: {exc!r}). "
-            "Most likely causes: (a) the dashboard container is on a "
-            "different Docker network than the sidecar (fix: attach both "
-            "to the same compose network, or use host.docker.internal); "
-            "(b) the URL in the target record is a public IP that hairpins "
-            "through the host bridge without NAT loopback (fix: re-register "
-            "the target with the container DNS name, e.g. http://copilot-"
-            "sidecar:8801); (c) the sidecar container is not running on "
-            "the deployment host (fix: docker ps | grep copilot-sidecar)."
+            f"Task token preflight failed: cannot reach {url!r} ({exc}). "
+            "Check VPN, that the sidecar container is running on the "
+            "deployment host, and that the URL in the target record is "
+            "correct."
         )
 
     if resp.status_code == 401:
