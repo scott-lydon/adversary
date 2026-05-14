@@ -35,32 +35,36 @@ showed $0 forever.
 `store.update_agent_run_totals` at the end. The helper raises if the
 placeholder row is missing — silent no-op would hide the regression.
 
-### C3. Numbers in user-facing aggregates must be the real measurement, never a default
+### C3. Adversary's local manifestation of the global "must be real" rule
+
+**Global rule:** see
+`~/Documents/Claude/Projects/BUG_PREVENTION.md` → D1 ("Numbers in
+user-facing aggregates must be the real measurement, never a default").
+The general rule lives there because it applies to every project, not
+just adversary; this section is only the adversary-specific
+manifestation and history.
 
 **Issue (2026-05-14).** `ScriptedProvider.red_team` stamped
 `dollar_cost=0.001` on every Attack and `ScriptedProvider.judge` stamped
-the same on every Verdict. The orchestrator sums both into
-`spent_usd`, so the dashboard showed roughly `5 × $0.001 × 2 = $0.01`
-spent for a scripted scan even though no LLM call was made and the
-provider dropdown literally labeled it `scripted (deterministic,
-offline, $0)`. The user reasonably read $0.01 as real money charged.
+the same on every Verdict. The orchestrator sums both into `spent_usd`,
+so the dashboard showed roughly `5 × $0.001 × 2 = $0.01` spent for a
+scripted scan even though no LLM call was made and the provider
+dropdown literally labeled it `scripted (deterministic, offline, $0)`.
+The user reasonably read $0.01 as real money charged.
 
-**Prevention.** Any number that propagates into a user-facing aggregate
-(cost, count, latency, score, percent, anything that gets summed,
-averaged, or charted) MUST be the real measurement. Zero is acceptable
-only when zero is what was actually measured — ScriptedProvider emits
-`dollar_cost=0.0` because no LLM was called, not as a default. Zero-as-
-default is the same failure mode as `0.001`-as-placeholder: both claim
-a measurement that was not taken. If a field needs to mark "this work
-happened" without a real numeric value, use a non-numeric channel
-(boolean, timestamp, model name string) so it cannot accidentally
-aggregate. Reserve non-zero `dollar_cost` for code paths that actually
-invoke a billed LLM. Note: when the target itself calls an LLM (e.g.
-the Clinical Co-Pilot sidecar), that cost hits the operator's LLM
-provider bill independently of the adversary provider mode; the target-
-side cost is real and is NOT reflected in `spent_usd`. The Run-scan
-panel calls this out in plain language so a scripted-vs-live confusion
-does not recur. Contract test pinning the invariant lives at
+**Adversary-specific applications of D1.**
+- ScriptedProvider emits `dollar_cost=0.0` because no LLM was called.
+  $0 is the real measurement here, not a default.
+- Reserve non-zero `dollar_cost` for code paths that actually invoke a
+  billed LLM (LiteLLMProvider and similar).
+- When the target sidecar itself calls an LLM (e.g. the Clinical
+  Co-Pilot), that cost hits the operator's LLM provider bill
+  independently of the adversary provider mode; target-side cost is
+  real and is NOT reflected in `spent_usd`. The Run-scan panel says
+  this in plain language so a scripted-vs-live confusion does not
+  recur.
+
+**Contract test pinning the invariant:**
 `tests/test_scripted_scan_contract.py::test_scripted_scan_costs_zero_dollars`.
 
 ## T — Audit timeline / observability
