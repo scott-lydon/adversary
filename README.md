@@ -35,7 +35,44 @@ Gauntlet AI Week 3 deliverable. Designed to be reusable across products via a `T
 
 Clinical Co-Pilot at `http://5.161.253.237:8801` (forked OpenEMR from Weeks 1 and 2). Patients seeded: Barbara Boston (gout), Suzie Sanchez (osteoporosis), Demo Patient (penicillin allergy).
 
-## Setup
+## For reviewers — fastest path
+
+You do not need to clone anything, mint a token, or set up Python. The platform
+is already deployed and gated.
+
+1. Go to **https://adversary.5-161-253-237.sslip.io**
+2. Your browser will prompt for HTTP Basic-Auth. Type:
+   - username `admin`
+   - password `pass`
+
+   These are cohort-demo credentials by design (the bcrypt hash is checked
+   into [`deploy/Caddyfile`](deploy/Caddyfile) with a comment saying so);
+   they are not secret. Safari users: tick "Remember this password" or the
+   prompt will reappear on every navigation due to a Safari path-cache bug.
+3. Click **Targets** in the nav, then **clinical-copilot-hetzner**.
+4. Scroll to the **Run scan** panel. Defaults are fine
+   (`scripted` provider, $0.50 budget, 1 campaign, 5 attacks per campaign).
+   **Leave the task-token field blank.** The dashboard mints a fresh JWT
+   server-side, scoped to a seeded patient, on every Run scan press. The
+   token never crosses to your browser.
+5. Click **Run scan**. You land on a live progress page that streams every
+   agent event (`red_team_start` → `target_send` → `target_response` →
+   `judge_done` → `campaign_done`). One end-to-end scripted scan finishes in
+   under 5 seconds.
+6. To see real exploits (not just refusals), switch the provider dropdown
+   from `scripted` to `live` and resubmit. That spends real money on the
+   target sidecar's LLM calls; the budget cap is enforced ($5 hard ceiling
+   per scan). Past live runs are visible at `/findings`.
+
+What "leave the task token blank" actually does: the dashboard reads
+`COPILOT_BFF_JWT_SIGNING_KEY` from its own `.env` (set during install on the
+Hetzner host), mints a `HS256` JWT scoped to `barbara-boston-001` with a
+30-minute TTL, validates it against the sidecar's `/chat` endpoint, then
+hands it to the orchestrator. If the preflight call fails, the scan refuses
+to start and prints a precise message naming the likely cause (DNS, refused
+connection, wrong signing key, hairpin NAT, etc.) — no silent failures.
+
+## Setup (only if you want to run adversary locally)
 
 ```bash
 # clone and install
