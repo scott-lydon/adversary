@@ -3,7 +3,9 @@
 
 > **Target:** Clinical Co-Pilot at `http://5.161.253.237` (forked OpenEMR; AI sidecar in Python). Patients seeded with Barbara Boston / gout, Suzie Sanchez / osteoporosis, Demo Patient / penicillin allergy.
 > **Threat modeling methodology:** [STRIDE](https://learn.microsoft.com/en-us/azure/security/develop/threat-modeling-tool-threats) adapted for Large Language Model (LLM) applications, cross-referenced with the [OWASP Top 10 for Large Language Model Applications (2025)](https://owasp.org/www-project-top-10-for-large-language-model-applications/).
-> **Status as of 2026-05-11:** living document. The Adversary platform exercises this surface continuously; entries change as the regression harness either confirms or refutes the existing defense ratings.
+> **Status as of 2026-05-13:** living document. The Adversary platform exercises this surface continuously; entries change as the regression harness either confirms or refutes the existing defense ratings.
+>
+> **Live-run findings (2026-05-13).** Five exploits confirmed against the live Co-Pilot in a single 13-attack run. Two indirect-prompt-injection cases (one chart-note variant filtered by the sidecar's literal-substring guard, one patient-portal-questionnaire variant the model adopted as authoritative chart state). One direct-prompt-injection canary leak that bypassed the verifier's citation requirement. One multi-turn drift exploit that confirmed the "no defense" rating on that row. Two snapshot-poisoning exploits with patient-safety impact (fabricated allergy + fabricated drug interaction). Live captures: `evals/<category>/_results/latest.json`. Vulnerability reports: `vulnerability-reports/PI-2026-001.md`, `vulnerability-reports/PI-2026-003.md`, `vulnerability-reports/PI-2026-004.md`, `vulnerability-reports/SC-2026-001.md`, `vulnerability-reports/SC-2026-004.md`.
 
 ---
 
