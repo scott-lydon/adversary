@@ -218,9 +218,14 @@
   {% else %}
   <p class="text-sm muted mb-4">
     {% if target.kind == 'clinical_copilot' %}<strong>Step 2 &middot;</strong> {% endif %}Submits a real scan against <code>{{ target.base_url }}</code>. For the
-    <code>scripted</code> provider this finishes in a couple of seconds; for
-    <code>live</code> it can take a minute and will spend real money on LLM
-    APIs (capped at $5).
+    <code>scripted</code> provider this finishes in a couple of seconds and the
+    Adversary spend reads $0; for <code>live</code> it can take a minute and
+    will spend real money on LLM APIs (capped at $5).
+    {% if target.kind == 'clinical_copilot' %}
+    Note: every attack still triggers a real call from the target sidecar to
+    its own LLM, so a live target will show charges on your LLM provider bill
+    even when this form is set to <code>scripted</code>.
+    {% endif %}
   </p>
   {% endif %}
   <form method="post" action="/targets/{{ target.name }}/scan" class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -234,6 +239,19 @@
       <span class="text-xs uppercase muted tracking-wider">Max campaigns</span>
       <input type="number" name="max_campaigns" value="3" min="1" max="10"
              class="w-full p-2 mt-1" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+      <span class="text-xs muted mt-1 block">
+        A campaign picks one (category, subcategory) pair. Total attacks =
+        <em>campaigns × attacks per campaign</em>.
+      </span>
+    </label>
+    <label class="block">
+      <span class="text-xs uppercase muted tracking-wider">Attacks per campaign</span>
+      <input type="number" name="attacks_per_campaign" value="5" min="1" max="10"
+             class="w-full p-2 mt-1" style="background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+      <span class="text-xs muted mt-1 block">
+        Default 5 matches the historical hardcoded value. With campaigns=3 and
+        attacks=5 the scan runs up to 15 attacks, not 3.
+      </span>
     </label>
     <label class="block">
       <span class="text-xs uppercase muted tracking-wider">Provider</span>

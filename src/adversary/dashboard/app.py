@@ -925,6 +925,11 @@ def create_app() -> FastAPI:
         name: str,
         budget_usd: float = Form(0.50),
         max_campaigns: int = Form(3),
+        # Was hardcoded to 5 inside the orchestrator. Exposed here so the
+        # form's two limits ("campaigns" and "attacks per campaign") match
+        # the operator's mental model: total attacks = campaigns * apc.
+        # See BUG_PREVENTION.md UX1.
+        attacks_per_campaign: int = Form(5),
         provider: str = Form("scripted"),
         seed: str = Form(""),
         task_token: str = Form(""),
@@ -950,6 +955,10 @@ def create_app() -> FastAPI:
         # Soft-clamp budget so a stray form submission can't burn $$$.
         budget_usd = max(0.01, min(budget_usd, 5.00))
         max_campaigns = max(1, min(max_campaigns, 10))
+        # Same clamp range as the form's min/max attributes. A scripted scan
+        # with apc=10 + campaigns=10 still costs $0; a live scan caps total
+        # LLM-billed work at 100 attacks, well under the $5 budget ceiling.
+        attacks_per_campaign = max(1, min(attacks_per_campaign, 10))
         seed_int: int | None
         if seed.strip():
             try:
@@ -972,7 +981,10 @@ def create_app() -> FastAPI:
         # visible events so the user sees motion the second the page loads.
         store.close()
         scan_id = _uuid.uuid4().hex[:12]
-        expected_attacks = max_campaigns * 5
+        # The multiplier the form makes explicit. Drives the progress page's
+        # "X of Y attacks complete" header so the user can audit campaigns
+        # vs attacks against the form they submitted.
+        expected_attacks = max_campaigns * attacks_per_campaign
         job = ScanJob(
             id=scan_id,
             target_name=record.name,
@@ -995,7 +1007,9 @@ def create_app() -> FastAPI:
                 "step": "form_received",
                 "label": (
                     f"Form received · target={record.name}, provider={provider}, "
-                    f"budget=${budget_usd:.2f}, campaigns={max_campaigns}"
+                    f"budget=${budget_usd:.2f}, campaigns={max_campaigns} "
+                    f"× {attacks_per_campaign} attacks each "
+                    f"(≤ {expected_attacks} total)"
                 ),
             },
         )
@@ -1148,6 +1162,7 @@ def create_app() -> FastAPI:
                     record=record,
                     budget_usd=budget_usd,
                     max_campaigns=max_campaigns,
+                    attacks_per_campaign=attacks_per_campaign,
                     provider_name=provider,
                     seed=seed_int,
                     task_token=effective_task_token,

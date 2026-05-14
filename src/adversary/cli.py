@@ -105,6 +105,17 @@ def scan_cmd(
     ),
     budget_usd: float = typer.Option(1.00, help="Per-session dollar budget."),
     max_campaigns: int = typer.Option(3, min=1, max=50),
+    attacks_per_campaign: int = typer.Option(
+        5,
+        "--attacks-per-campaign",
+        min=1,
+        max=10,
+        help=(
+            "Attacks generated and judged within each campaign. Total attacks "
+            "= max_campaigns * attacks_per_campaign. Default 5 matches the "
+            "historical hardcoded value."
+        ),
+    ),
     provider: str = typer.Option("scripted"),
     seed: int | None = typer.Option(None, help="Deterministic seed for ScriptedProvider."),
     task_token: str | None = typer.Option(None, envvar="COPILOT_TASK_TOKEN"),
@@ -167,6 +178,7 @@ def scan_cmd(
         reports_dir=reports_dir,
         budget_usd=budget_usd,
         max_campaigns=max_campaigns,
+        attacks_per_campaign=attacks_per_campaign,
         seed=seed,
         target_record=record,
     )

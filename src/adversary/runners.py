@@ -88,6 +88,7 @@ async def run_scan_for_target(
     task_token: str | None,
     patient_id: str | None,
     reports_dir: Path,
+    attacks_per_campaign: int = 5,
     progress_callback: ProgressCallback = None,
 ) -> list[CampaignOutcome]:
     """Execute a real scan against the given registered target.
@@ -155,6 +156,7 @@ async def run_scan_for_target(
         reports_dir=reports_dir,
         budget_usd=budget_usd,
         max_campaigns=max_campaigns,
+        attacks_per_campaign=attacks_per_campaign,
         seed=seed,
         target_record=record,
         progress_callback=progress_callback,

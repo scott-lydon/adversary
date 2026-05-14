@@ -128,17 +128,28 @@ class OrchestratorAgent:
         reports_dir: str | Path,
         budget_usd: float = 1.0,
         max_campaigns: int = 3,
+        attacks_per_campaign: int = 5,
         seed: int | None = None,
         target_record: TargetRecord | None = None,
         progress_callback: ProgressCallback = None,
         learned_attacks: LearnedAttacksStore | None = None,
     ) -> None:
+        if attacks_per_campaign < 1:
+            # Fail loudly instead of producing an empty campaign that the
+            # RedTeamAgent would then reject downstream with a less specific
+            # "zero attacks" error. See BUG_PREVENTION.md UX1.
+            raise ValueError(
+                "OrchestratorAgent: attacks_per_campaign must be >= 1; got "
+                f"{attacks_per_campaign}. The form should clamp this; reaching "
+                "here means a caller bypassed the dashboard's clamp."
+            )
         self.adapter = adapter
         self.provider = provider
         self.store = store
         self.reports_dir = Path(reports_dir)
         self.budget_usd = budget_usd
         self.max_campaigns = max_campaigns
+        self.attacks_per_campaign = attacks_per_campaign
         self.seed = seed
         self.target_record = target_record
         self.red_team = RedTeamAgent(provider)
@@ -285,7 +296,11 @@ class OrchestratorAgent:
             prior_failures=[],
             target_session_template={},
             budget_remaining_usd=max(0.0, self.budget_usd - self.spent_usd),
-            max_attacks=5,
+            # Was hardcoded to 5; that hid the campaigns x attacks multiplier
+            # in the dashboard form ("Max campaigns = 3" silently meant up to
+            # 15 attacks). The form now exposes Attacks per campaign and
+            # plumbs it through here. See BUG_PREVENTION.md UX1.
+            max_attacks=self.attacks_per_campaign,
             seed=self.seed,
         )
 

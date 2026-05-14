@@ -35,6 +35,26 @@ showed $0 forever.
 `store.update_agent_run_totals` at the end. The helper raises if the
 placeholder row is missing — silent no-op would hide the regression.
 
+### C3. Stub providers must declare $0 cost, not a placeholder cent
+
+**Issue (2026-05-14).** `ScriptedProvider.red_team` stamped
+`dollar_cost=0.001` on every Attack and `ScriptedProvider.judge` stamped
+the same on every Verdict. The orchestrator sums both into
+`spent_usd`, so the dashboard showed roughly `5 × $0.001 × 2 = $0.01`
+spent for a scripted scan even though no LLM call was made and the
+provider dropdown literally labeled it `scripted (deterministic,
+offline, $0)`. The user reasonably read $0.01 as real money charged.
+
+**Prevention.** A pure-Python / heuristic provider MUST emit
+`dollar_cost=0.0`. Reserve non-zero `dollar_cost` for code paths that
+actually invoke a billed LLM. If a provider needs a "this happened"
+marker, use `latency_ms` or `tokens_in`/`tokens_out` — not dollars.
+Note: when the target itself calls an LLM (e.g. the Clinical Co-Pilot
+sidecar), that cost hits the operator's LLM provider bill independently
+of the adversary provider mode; the target-side cost is real and is NOT
+reflected in `spent_usd`. The Run-scan panel calls this out in plain
+language so a scripted-vs-live confusion does not recur.
+
 ## T — Audit timeline / observability
 
 ### T1. Every audited action needs a narrative renderer
@@ -266,6 +286,26 @@ truncation is reversible (tooltip, expand-on-click). When rendering
 attacker-controlled strings into the DOM, use `textContent` (or the
 template-equivalent) — never `innerHTML` — so a hostile target
 response cannot inject HTML/JS into your own dashboard.
+
+### U3. Every form field that participates in a multiplier must name the multiplier
+
+**Issue (2026-05-14).** The Run-scan form exposed `Max campaigns`
+(default 3) but kept `max_attacks=5` hardcoded inside the orchestrator.
+The operator read "Max campaigns = 3" as "max attacks = 3" and
+reasonably expected three attacks total; the scan actually generated
+five attacks in the first campaign (and could have produced up to
+fifteen if all three campaigns ran). The form gave no hint that a
+multiplier was applied downstream.
+
+**Prevention.** If a form field is multiplied by another quantity
+before reaching the underlying action, expose the other quantity in
+the same form OR put the multiplication explicitly into the field's
+label / helper text (e.g. "Max campaigns (each runs up to 5
+attacks)"). The Run-scan form now has an explicit `Attacks per
+campaign` input and the orchestrator no longer carries a hardcoded
+`max_attacks=5`. If you add a new "loop count" parameter, ask: what
+does this multiply against, and is that visible to the operator
+filling out the form?
 
 ### U3. Default LLM `max_tokens` caps must be sized for real outputs
 
