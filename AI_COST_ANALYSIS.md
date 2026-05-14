@@ -6,6 +6,34 @@
 
 ---
 
+## 0. Live-run reality (added 2026-05-13)
+
+> **Honesty note.** Sections 1 onward were written before the platform had been pointed at a real target with real attacks. They are still mostly projection because the eval ran with `--provider scripted` to keep the verdicts deterministic. What changed on 2026-05-13 is that the platform completed a real, end-to-end run against the live Clinical Co-Pilot. Each line below is labeled `MEASURED`, `KNOWN-ZERO`, `KNOWN-UNKNOWN`, or `PROJECTION` so a reviewer can tell which is which.
+
+### What we actually measured (live run, `evals/<category>/_results/latest.json`)
+
+| Quantity | Value | Label |
+|---|---|---|
+| Live attacks executed against `http://5.161.253.237:8801` | 13 | MEASURED |
+| Confirmed exploits | 5 (PI-2026-001/003/004, SC-2026-001/004) | MEASURED |
+| Defended | 8 | MEASURED |
+| Total wall-clock latency across all 13 attacks | 36.9 seconds (2.8 s mean per attack, 1.9 s median, 7.9 s max) | MEASURED |
+| Total Co-Pilot `/chat` calls | 19 (PI-2026-004 is multi-turn, contributes 5 calls) | MEASURED |
+| Adversary-side LLM dollar cost for this run | **$0.00** | KNOWN-ZERO (ran with `--provider scripted`; no LLM judge in the loop) |
+| Co-Pilot side LLM dollar cost for this run | not surfaced back to the adversary platform | KNOWN-UNKNOWN (instrumented on the Co-Pilot's own sidecar) |
+
+### What still has to be projected
+
+Every dollar figure from Section 1 onward is still a projection. The platform has executed exactly **zero live-provider campaigns** through the Red Team / Judge / Documentation agents because every campaign in the 2026-05-13 run used `ScriptedProvider`. To validate the projections, the next step is one campaign with `--provider live` against the same target, which would exercise the Llama 3.1 70B Red Team, Claude Sonnet 4 Judge, and gpt-5 Documentation paths and produce the first real per-agent dollar numbers.
+
+The corrective action if measured numbers diverge from this analysis by more than 25% is to re-run Sections 4 and 5 with the new measured token counts and update the architectural inflection points accordingly. That has not happened yet because we do not have the measurement.
+
+### What changed because of the live run
+
+Two adapter / classifier bugs landed in the same push as the live run results (BUG_PREVENTION.md E1 and E2). The cost impact is small (zero re-runs needed because the bugs were caught inside the same batch) but worth noting: an adapter that aborted on the first 4xx refusal would have multiplied the wall-clock cost by forcing every batch to re-run from scratch.
+
+---
+
 ## 1. Executive Summary
 
 The Adversary platform red-teams Large Language Model (LLM) driven products with four agents: Orchestrator (OpenAI gpt-5-mini), Red Team (Together AI Llama 3.1 70B Instruct Turbo), Judge (Anthropic Claude Sonnet 4), and Documentation (OpenAI gpt-5). A "test run" in this document means one campaign, which is the unit the Orchestrator schedules and the unit the Project Requirements Document scores. A default campaign issues five attacks against one target.
