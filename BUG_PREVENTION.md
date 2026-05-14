@@ -67,3 +67,49 @@ page used totally different (and inconsistent) queries.
 the campaigns table row, and the global summary card all share the same
 arithmetic. If you need a new field on the campaign page, add it to
 `campaign_breakdown` first, then read it in the template.
+
+## L — Learning / promotion of confirmed exploits
+
+### L1. Tests must never write into the real `.runtime/` directory
+
+**Issue (2026-05-13, prevented).** The learned-attacks store defaults to
+`<repo_root>/.runtime/learned_attacks.json`. Without an isolation
+fixture, every orchestrator unit test that triggers a SUCCESS verdict
+would silently pollute the developer's real prompt bank, breaking
+determinism across runs and across machines.
+
+**Prevention.** `LearnedAttacksStore.__init__` honors the
+`ADVERSARY_LEARNED_ATTACKS_PATH` environment variable, and the autouse
+`isolated_learned_attacks_path` fixture in `tests/conftest.py` points it
+at a per-test `tmp_path`. Any new path-bearing config knob added to
+`learning.py` must follow the same env-var-overridable pattern and pick
+up a matching autouse fixture before merge.
+
+### L2. Promotion failures must not abort a campaign
+
+**Issue (2026-05-13, prevented).** If `.runtime/learned_attacks.json`
+becomes unwriteable mid-scan (filesystem full, permissions flip), a
+naive `promote()` call would propagate the exception out of the SUCCESS
+branch and lose every report the campaign was about to write.
+
+**Prevention.** The orchestrator wraps `learned_attacks.promote(...)` in
+`try/except LearnedAttackError`, logs at error level, emits a
+`learned_attack_promote_failed` event so the dashboard timeline shows
+the failure, and continues with the rest of the campaign. Same pattern
+applies to the `prompts_for(...)` load path at the top of each
+campaign — a bad file degrades to an empty seed-examples list rather
+than killing the scan.
+
+### L3. Novelty hint must dedup builtins against learned attacks
+
+**Issue (2026-05-13, prevented).** Without dedup, a learned-attack
+prompt that paraphrases a built-in template would appear twice in the
+"do not paraphrase this" novelty block fed to the live RedTeam, wasting
+tokens and weakening the signal.
+
+**Prevention.** `_known_prompts_for(brief)` in
+`providers/litellm_provider.py` runs every prompt through
+`learning._normalize_prompt` (strips trailing canary, collapses
+whitespace, lowercases) before adding to the output list. If you add a
+new source of "known attacks" to the novelty hint, route it through the
+same normalizer or the dedup invariant breaks.
