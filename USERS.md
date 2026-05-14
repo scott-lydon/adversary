@@ -42,9 +42,9 @@ She maintains a list of about 30 manually-curated jailbreak payloads in a spread
 
 ### What Riya does with Adversary
 
-She types `adversary scan --target https://copilot.prod.hospital.org --campaigns all --budget-usd 50 --since-commit abc1234` once. The platform runs overnight. In the morning, she has a dashboard showing 12 newly explored attack subcategories, 3 confirmed exploits with severity-rated reports, and a coverage matrix showing where the platform did not get traction (which she can prioritize manually). The regression harness has already been wired into the Co-Pilot's GitHub Actions, so the 3 confirmed exploits will re-run on every future Co-Pilot deploy automatically.
+She types `adversary scan --target-name clinical-copilot-hetzner --budget-usd 50 --max-campaigns 10` once. The platform runs overnight. In the morning, she has a dashboard showing 12 newly explored attack subcategories, 5 confirmed exploits with severity-rated reports (the 2026-05-13 live run confirmed exactly five against the deployed Co-Pilot), and a coverage matrix showing where the platform did not get traction (which she can prioritize manually). The regression harness has already been wired into the Co-Pilot's GitHub Actions, so the 5 confirmed exploits will re-run on every future Co-Pilot deploy automatically.
 
-She does not need to write any payloads. The Red Team Agent generates them and mutates them. She does not need to evaluate each one; the Judge Agent does that. She does not need to write the reports; the Documentation Agent does. What she does is review the 3 reports, decide which ones to escalate to the EMR team, and approve the regression harness's auto-additions to the test suite.
+She does not need to write any payloads. The Red Team Agent generates them and mutates them. She does not need to evaluate each one; the Judge Agent does that. She does not need to write the reports; the Documentation Agent does. What she does is review the 5 reports, decide which ones to escalate to the EMR team, and approve the regression harness's auto-additions to the test suite.
 
 ### Riya's specific use cases
 

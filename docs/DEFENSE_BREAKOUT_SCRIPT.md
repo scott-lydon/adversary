@@ -53,7 +53,7 @@ Four costs I accepted.
 
 [Stop the diagram switching. Look at the group.]
 
-Four agents, vendor-split between attacker and judge, reusable target boundary, three confirmed exploits on the live Co-Pilot, regression gated into CI. Repo at github.com/scott-lydon/adversary.
+Four agents, vendor-split between attacker and judge, reusable target boundary, five confirmed exploits on the live Co-Pilot from the 2026-05-13 live run, regression gated into CI. Repo at github.com/scott-lydon/adversary.
 
 [Stop talking. Let them ask.]
 
