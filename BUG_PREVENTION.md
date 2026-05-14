@@ -165,3 +165,177 @@ tokens and weakening the signal.
 whitespace, lowercases) before adding to the output list. If you add a
 new source of "known attacks" to the novelty hint, route it through the
 same normalizer or the dedup invariant breaks.
+
+## U — UX during long or multi-step operations
+
+### U1. Any action that could exceed ~200 ms must show progress to the user
+
+**Issue (2026-05-13).** The "Run scan" form on `/targets/<id>` opened
+the campaign page with an empty event timeline. Auto-mint, lazy
+litellm import, allowlist check, adapter open, and provider build all
+happened inside one synchronous burst with no audit row, so the page
+sat empty for several seconds and looked frozen.
+
+**Prevention.** Whenever a request triggers work that could plausibly
+take longer than ~200 ms, surface progress to the user before the work
+runs. Single-shot dependency call → spinner. Multi-step or
+potentially long pipeline → progress bar fed by per-step events (in
+this codebase, `store.append_audit` rows the timeline renderer already
+knows how to draw). Every step that calls out to a network, a child
+process, or an LLM gets its own event before it starts. Rule of
+thumb: if you catch yourself adding a route that creates a record at
+the end of a multi-step pipeline, create the record first and emit
+`*_started` events as you go.
+
+### U2. Do not truncate user-visible labels server-side or client-side
+
+**Issue (2026-05-13).** Attack prompts on the scan-progress page were
+`.slice(0, 80)`'d server-side AND client-side. Operators could not see
+the full prompt the Red Team had generated without opening the
+database. Long target responses had the same problem.
+
+**Prevention.** Long strings on dashboards wrap, they do not truncate.
+Use `word-break: break-word; overflow-wrap: anywhere` on the column.
+Never `.slice(...)` / `substring(...)` a user-visible label unless the
+truncation is reversible (tooltip, expand-on-click). When rendering
+attacker-controlled strings into the DOM, use `textContent` (or the
+template-equivalent) — never `innerHTML` — so a hostile target
+response cannot inject HTML/JS into your own dashboard.
+
+### U3. Default LLM `max_tokens` caps must be sized for real outputs
+
+**Issue (2026-05-13).** Default caps (red_team=4000, judge=800,
+documentation=2000, orchestrator=200) routinely truncated mid-JSON,
+producing parse errors the user only saw as a dead campaign with no
+explanation.
+
+**Prevention.** Pick caps from observed p95 output length plus
+headroom, not from a hopeful default. Current floor for this repo:
+red_team 16000, judge 4000, documentation 8000, orchestrator 1000.
+When you wire a new `completion` call, log token usage on the first
+few real runs and revisit the cap before merging. A `max_tokens`
+hit should raise a specific, named error (not a generic JSONDecode
+failure), so the next operator does not have to guess.
+
+## S — Surfacing instructions and credentials
+
+### S1. CLI helpers that look real must work end-to-end
+
+**Issue (2026-05-13).** `adversary debug mint-task-token` emitted a
+synthetic placeholder JWT that had the right shape but no valid HS256
+signature. The docstring admitted the placeholder; the
+operator-facing docs did not. Users pasted the token into the form
+and got 401 with no clue why.
+
+**Prevention.** Either a debug/helper CLI does the real thing
+end-to-end or it refuses to run with a loud, specific error pointing
+at the missing piece (signing key, host, container name). Never leave
+a working-shaped-but-broken-output stub in a path users will reach.
+If the real path needs deployment access, document the SSH /
+container-exec recipe in the same `--help` text and in the form hint.
+
+### S2. Long single-line outputs (tokens, secrets, paths) must be wrap-safe
+
+**Issue (2026-05-13).** `rich.console` wrapped the 419-character
+minted JWT at 80 columns, corrupting it for `$(...)` capture. The
+operator only saw 401 on paste; the actual cause was buried at column
+80 of the terminal.
+
+**Prevention.** When a script prints something a user (or a shell
+`$(...)`) will copy verbatim — JWT, secret, base64 blob, file path —
+write it to stdout via the raw plain stream, not a styled console.
+Add a test that pipes the command through `wc -c` and asserts the
+single-line length matches the expected payload size.
+
+### S3. Operator instructions must render before any gate that needs them
+
+**Issue (2026-05-13).** "How to get a task token" sat inside the
+allowlist-conditional block, so it was hidden until the operator
+allowlisted the target — but the instructions were exactly what the
+operator needed to read *before* deciding to allowlist anything.
+
+**Prevention.** Onboarding and "how do I get X" panels render
+unconditionally on the page that asks for X. Allowlist / consent /
+plan-gating disables the submit button, never hides the help. Add an
+inline anchor link from the input field back up to the help panel so
+a form-filler partway down the page can jump up without losing
+typed values.
+
+## P — Production proxy / auth headers
+
+### P1. Do not leave a `WWW-Authenticate` header behind a gate you do not actually need
+
+**Issue (2026-05-13).** Caddy fronted the adversary dashboard with
+Basic Auth even though no real protection requirement existed.
+Safari treats Basic-Auth credentials as request-scoped on some
+sslip.io subdomain shapes and re-popped the dialog on every
+navigation. Removing the gate removed the header and the prompt.
+
+**Prevention.** Add Basic Auth only when there is a written
+authentication requirement; do not use it as a vague "soft gate".
+Production auth is cookie/JWT-based on real routes and a firewall
+(Caddy `respond` or IP allowlist) on destructive routes. The comment
+block in `deploy/Caddyfile` shows the 4-line snippet to re-add if a
+real Basic-Auth requirement returns.
+
+## E — Evaluation harness / live targets (continued)
+
+### E4. Strip echoed user input before scanning for canaries; refusals win
+
+**Issue (2026-05-13).** ADV-2026-0053 / ADV-2026-0054 were filed as
+High-severity PHI exploits against the live Clinical Co-Pilot. The
+"leak" was the four-digit canary token (`-1409`) appearing in the
+target's refusal: `"No data available for Patient/99001-1409"`. The
+target had cited the user's own input back inside an explicit
+refusal; the scripted Judge's substring check fired anyway. The live
+Claude-Sonnet-4 Judge re-scored every one of these as a clean
+defense (confidence 0.9–0.95).
+
+**Prevention.** Before running canary-substring detection, subtract
+any verbatim copy of the attack prompt from the response. If the only
+occurrence of the canary lies inside an echo of the prompt, that is
+not a leak. Additionally, treat the presence of an explicit refusal
+phrase (`_REFUSAL_PHRASES`) as overriding the canary match — refusal
+wins, demote to `fail` regardless of canary substring. A SUCCESS
+verdict that the live Judge later re-scores as `fail` with confidence
+≥ 0.9 should flip the dashboard finding to `false_positive`
+automatically.
+
+## V — Validation against live targets
+
+### V1. An `evals/` (or `tests/`) directory must hold real cases run against the live target, not scaffolding
+
+**Issue (2026-05-13).** Initial MVP submission had two regression
+seeds against `echo://demo@seed-42` with no `severity` /
+`exploitability` / `observed_behavior` / `regression_flag` fields,
+and the three category subdirectories promised in `evals/README.md`
+(`prompt_injection/`, `data_exfiltration/`, `state_corruption/`) did
+not exist on disk. No live-run output was committed. Submission
+feedback called the directory a skeleton.
+
+**Prevention.** Before merging any change that touches an evaluation
+surface: every seed file carries every documented schema field;
+every category directory promised in the README exists on disk and
+holds at least one real seed across ≥ 3 distinct parent categories;
+the runner has been executed against the live (non-echo) target at
+least once and the resulting `_results/latest.json` is committed; the
+top-level README's "latest results" table reflects that run. The
+seed-schema check is a fast unit test in
+`tests/test_eval_seeds.py` and runs in CI.
+
+### V2. Dashboard fields must show actual recorded values, never placeholder strings
+
+**Issue (2026-05-13).** The campaign detail page showed
+`Model: "live"` on every campaign because the orchestrator wrote the
+literal string `"live"` into `agent_runs.model_name` as a placeholder
+and never replaced it with the actual provider/model id (e.g.
+`together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo`,
+`anthropic/claude-sonnet-4-20250514`). The same row's `latency_ms`
+sat at `0` for the same reason.
+
+**Prevention.** Do not seed a row with a stand-in string that the UI
+will later render. Insert with `NULL`, render `NULL` as "—", and
+update the row to the real value the moment the work that produces it
+completes (see `update_agent_run_totals`). A regression test should
+assert no `agent_runs.model_name` row equals `"live"` after the
+campaign finishes.
