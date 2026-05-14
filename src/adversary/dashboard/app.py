@@ -228,6 +228,26 @@ _TOKEN_CACHE: dict[tuple[str, str, str], tuple[str, float]] = {}
 _TOKEN_CACHE_LOCK = asyncio.Lock()
 
 
+async def _evict_token_cache_entry(base_url: str, patient_id: str) -> None:
+    """Drop any cached tokens for this (base_url, patient_id) pair.
+
+    Used when the preflight observes a 401: the sidecar's verifier
+    rejected our cached token, which means the cache holds a token signed
+    with a stale ``COPILOT_BFF_JWT_SIGNING_KEY``. Evicting forces the next
+    auto-mint to read the current env and produce a fresh token. Without
+    this, a signing-key rotation requires a container restart to take
+    effect at the dashboard layer (the BFF would have moved on instantly).
+    The cache key includes user_id so we evict every entry whose first two
+    components match, regardless of user.
+    """
+    async with _TOKEN_CACHE_LOCK:
+        to_drop = [
+            k for k in _TOKEN_CACHE if k[0] == base_url and k[1] == patient_id
+        ]
+        for k in to_drop:
+            _TOKEN_CACHE.pop(k, None)
+
+
 class AutoMintError(RuntimeError):
     """Raised when auto-minting a Clinical Co-Pilot task token fails.
 
@@ -1031,7 +1051,15 @@ def create_app() -> FastAPI:
         # very first /chat call will 401. Surfacing that here instead of
         # mid-scan saves the user from a confusing in-flight failure and
         # gives a specific, actionable error message.
+        #
+        # Self-heal: if preflight 401's AND the token came from auto-mint
+        # (caller passed task_token=""), the in-memory token cache is
+        # holding a token signed against a now-stale key. Evict and retry
+        # the mint+preflight once before reporting failure. This makes a
+        # signing-key rotation on the sidecar a zero-touch event for the
+        # dashboard instead of requiring a container restart.
         if effective_task_token and record.kind == "clinical_copilot":
+            preflight_patient_id = effective_patient_id or _AUTO_MINT_DEFAULT_PATIENT_ID
             await job.emit(
                 "startup",
                 {
@@ -1042,8 +1070,48 @@ def create_app() -> FastAPI:
             preflight_error = await _preflight_validate_token(
                 base_url=record.base_url,
                 task_token=effective_task_token,
-                patient_id=effective_patient_id or _AUTO_MINT_DEFAULT_PATIENT_ID,
+                patient_id=preflight_patient_id,
             )
+            token_was_auto_minted = not task_token.strip()
+            if (
+                preflight_error
+                and "returned 401" in preflight_error
+                and token_was_auto_minted
+            ):
+                await job.emit(
+                    "startup",
+                    {
+                        "step": "token_cache_evict",
+                        "label": (
+                            "Preflight 401 with an auto-minted token — evicting "
+                            "the in-process token cache and re-minting once "
+                            "(signing-key rotation auto-heal)."
+                        ),
+                    },
+                )
+                await _evict_token_cache_entry(
+                    base_url=record.base_url, patient_id=preflight_patient_id
+                )
+                try:
+                    effective_task_token = await auto_mint_task_token(
+                        base_url=record.base_url, patient_id=preflight_patient_id
+                    )
+                except AutoMintError as exc:
+                    await job.mark_done(
+                        error=(
+                            f"auto-mint retry after cache evict failed: {exc}. "
+                            "Check that COPILOT_BFF_JWT_SIGNING_KEY in this "
+                            "deployment's env matches the sidecar's value."
+                        )
+                    )
+                    return RedirectResponse(
+                        url=f"/scans/{scan_id}", status_code=303
+                    )
+                preflight_error = await _preflight_validate_token(
+                    base_url=record.base_url,
+                    task_token=effective_task_token,
+                    patient_id=preflight_patient_id,
+                )
             if preflight_error:
                 await job.mark_done(error=preflight_error)
                 return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
