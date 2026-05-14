@@ -41,9 +41,10 @@ You do not need to clone anything, mint a token, or set up Python. The platform
 is already deployed and gated.
 
 1. Go to **https://adversary.5-161-253-237.sslip.io**
-2. Your browser will prompt for HTTP Basic-Auth. Type:
+2. Your browser will prompt for HTTP Basic-Auth (a native system dialog,
+   not an HTML form rendered by the page). Type:
    - username `admin`
-   - password `pass`
+   - password `gauntlet-g5`
 
    These are cohort-demo credentials by design (the bcrypt hash is checked
    into [`deploy/Caddyfile`](deploy/Caddyfile) with a comment saying so);
