@@ -1655,16 +1655,41 @@ def create_app() -> FastAPI:
     # -----------------------------------------------------------------
 
     @app.get("/audit", response_class=HTMLResponse)
-    async def audit(request: Request, target: str | None = None) -> Any:
+    async def audit(
+        request: Request,
+        target: str | None = None,
+        before: int | None = None,
+        page_size: int = 200,
+    ) -> Any:
+        """Audit log, paginated. Cursor: `?before=<rowid_seq>` returns the
+        page of `page_size` rows immediately older than the given seq.
+
+        The earlier hard-coded `LIMIT 200` made the oldest ~half of any
+        decently-active deployment unreachable from the dashboard (user
+        reported only seeing #378-394 even though the log had 394+ rows).
+        Cursor pagination keeps the query indexed and bounded while
+        making every row reachable via Newer/Older links.
+        """
+        page_size = max(10, min(page_size, 500))
         store = _store()
-        rows = [
-            dict(r)
-            for r in store.conn.execute(
+        total = store.conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+        # Cursor: ascending or descending? The page reads newest-first.
+        # `before` = "give me rows with rowid_seq < this value, newest-first".
+        if before is None:
+            cursor_sql = (
                 "SELECT rowid_seq, prev_hash, this_hash, occurred_at, agent, "
-                "action, payload_json FROM audit_log ORDER BY rowid_seq DESC "
-                "LIMIT 200"
-            ).fetchall()
-        ]
+                "action, payload_json FROM audit_log "
+                "ORDER BY rowid_seq DESC LIMIT ?"
+            )
+            cursor_params: tuple[Any, ...] = (page_size,)
+        else:
+            cursor_sql = (
+                "SELECT rowid_seq, prev_hash, this_hash, occurred_at, agent, "
+                "action, payload_json FROM audit_log WHERE rowid_seq < ? "
+                "ORDER BY rowid_seq DESC LIMIT ?"
+            )
+            cursor_params = (before, page_size)
+        rows = [dict(r) for r in store.conn.execute(cursor_sql, cursor_params).fetchall()]
         # Decorate each row with its target_id (parsed from payload) so the
         # template can render the target badge and the filter pill works.
         for r in rows:
@@ -1675,12 +1700,73 @@ def create_app() -> FastAPI:
             t_row = store.get_target(target)
             if t_row is not None:
                 rows = [r for r in rows if r.get("target_id") == t_row["id"]]
+
+        # Build Newer / Older cursors (None when we are at the edge).
+        newest_seq_on_page = rows[0]["rowid_seq"] if rows else None
+        oldest_seq_on_page = rows[-1]["rowid_seq"] if rows else None
+        # Newer page: rows with rowid_seq > newest_seq_on_page.
+        # SQLite makes this trivial — peek at one row beyond and decide.
+        newer_cursor: int | None = None
+        older_cursor: int | None = None
+        if newest_seq_on_page is not None:
+            peek_newer = store.conn.execute(
+                "SELECT rowid_seq FROM audit_log WHERE rowid_seq > ? "
+                "ORDER BY rowid_seq ASC LIMIT 1",
+                (newest_seq_on_page,),
+            ).fetchone()
+            if peek_newer is not None:
+                # Cursor for "older page than" = the seq just newer than the
+                # current page's newest, so the next page's `before` lands
+                # on the row above the current page.
+                # The cleanest formulation: the previous page's `before`
+                # value is `newest_seq_on_page + page_size + 1`, but we
+                # just want a "go newer" link. Simpler: pass `before` such
+                # that the next page's newest is at or above the page above.
+                # Implementation: jump straight to "no `before`" if the
+                # nearest newer rowid is within the first page, otherwise
+                # offset by page_size.
+                nearest_newer = peek_newer["rowid_seq"]
+                # If the gap to the latest is <= page_size, show the
+                # absolute latest page (drop `before`).
+                latest = store.conn.execute(
+                    "SELECT MAX(rowid_seq) AS m FROM audit_log"
+                ).fetchone()["m"]
+                if (latest or 0) - newest_seq_on_page <= page_size:
+                    newer_cursor = -1  # sentinel: "drop the cursor"
+                else:
+                    newer_cursor = newest_seq_on_page + page_size + 1
+        if oldest_seq_on_page is not None:
+            peek_older = store.conn.execute(
+                "SELECT rowid_seq FROM audit_log WHERE rowid_seq < ? "
+                "ORDER BY rowid_seq DESC LIMIT 1",
+                (oldest_seq_on_page,),
+            ).fetchone()
+            if peek_older is not None:
+                older_cursor = oldest_seq_on_page
+
         ctx = _common_context(store)
         store.close()
+        # Compute the seq range actually shown for the header line.
+        if rows:
+            shown_from = oldest_seq_on_page
+            shown_to = newest_seq_on_page
+        else:
+            shown_from = shown_to = None
         return templates.TemplateResponse(
             request=request,
             name="audit.html",
-            context={"rows": rows, "target_filter": target, **ctx},
+            context={
+                "rows": rows,
+                "target_filter": target,
+                "total_rows": total,
+                "page_size": page_size,
+                "shown_from": shown_from,
+                "shown_to": shown_to,
+                "newer_cursor": newer_cursor,
+                "older_cursor": older_cursor,
+                "before": before,
+                **ctx,
+            },
         )
 
     # -----------------------------------------------------------------

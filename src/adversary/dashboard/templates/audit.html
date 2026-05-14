@@ -18,6 +18,35 @@
 </div>
 {% endif %}
 
+<!-- Pagination summary + Newer / Older cursors. The audit log is
+     hash-chained so order matters; cursors are rowid_seq-based so a
+     reload always shows the same page even as new rows append. -->
+<div class="mb-4 flex items-center justify-between gap-2 muted text-sm">
+  <div>
+    {% if shown_from is not none %}
+      Showing rows <code>#{{ shown_from }}</code>–<code>#{{ shown_to }}</code> of <strong>{{ total_rows }}</strong> total.
+    {% else %}
+      No rows on this page (cursor out of range?).
+    {% endif %}
+  </div>
+  <div class="flex items-center gap-2">
+    {% if newer_cursor is not none %}
+      {% if newer_cursor == -1 %}
+        <a href="/audit{% if target_filter %}?target={{ target_filter }}{% endif %}" class="badge badge-info no-underline">← Newer</a>
+      {% else %}
+        <a href="/audit?before={{ newer_cursor }}{% if target_filter %}&target={{ target_filter }}{% endif %}" class="badge badge-info no-underline">← Newer</a>
+      {% endif %}
+    {% else %}
+      <span class="badge badge-muted" style="opacity:0.5">← Newer</span>
+    {% endif %}
+    {% if older_cursor is not none %}
+      <a href="/audit?before={{ older_cursor }}{% if target_filter %}&target={{ target_filter }}{% endif %}" class="badge badge-info no-underline">Older →</a>
+    {% else %}
+      <span class="badge badge-muted" style="opacity:0.5">Older →</span>
+    {% endif %}
+  </div>
+</div>
+
 {% if rows %}
 <div class="panel p-0 table-wrap">
   <table>
