@@ -33,9 +33,19 @@
     silently — see BUG_PREVENTION.md U1.
   -->
   <style>
+    /*
+      Pulse animation is OPACITY-only on purpose. An earlier version
+      used `transform: scale(...)` and the user reported ghosted /
+      double-struck headline text in the same containing block. Root
+      cause: a CSS transform on a descendant promotes the surrounding
+      div into its own GPU composite layer, and text rendered on a
+      composite layer loses subpixel antialiasing, which reads as
+      double-struck letters. Opacity-only animation does not trigger
+      compositing of the parent, so text rendering stays clean.
+    */
     @keyframes adversary-pulse {
-      0%, 100% { opacity: 0.25; transform: scale(0.85); }
-      50%      { opacity: 1;    transform: scale(1.15); }
+      0%, 100% { opacity: 0.25; }
+      50%      { opacity: 1;    }
     }
     #activity-pulse {
       animation: adversary-pulse 1.4s ease-in-out infinite;
@@ -124,18 +134,38 @@ const elErr      = document.getElementById("error-banner");
 const elErrMsg   = document.getElementById("error-message");
 const elWait     = document.getElementById("waiting-label");
 
-// Map from a "we just sent work somewhere" event to (the playful label
-// to show while waiting, the event kind that ends the wait). The
-// labels are deliberately target-agnostic: we do not pretend to know
-// what the target is doing internally (a target could be HTTP, a
-// browser session, an SSH shell — none of which surface their own
-// progress). What we DO know is that we just sent something and are
-// blocked on a reply.
+// Map from a "we just sent work somewhere" event to (a function that
+// renders the wait label using whatever the event payload carries, the
+// event kind that ends the wait). The labels stay target-agnostic: we
+// surface adversary's OWN state about the call in flight (URL it sent
+// to, session it opened, patient claim it scoped the token to), never
+// any target-internal node names — those would only be honest if the
+// adapter actually streamed them, which the contract does not require.
 const WAITING_LABELS_BY_KIND = {
-  red_team_start:      { text: "Red Team brainstorming attacks…",          endKind: "red_team_done" },
-  target_send:         { text: "Tap-dancing through the target…",          endKind: "target_response" },
-  judge_start:         { text: "Judge reading the response…",              endKind: "judge_done" },
-  documentation_start: { text: "Documentation drafting the exploit report…", endKind: "documentation_done" },
+  red_team_start: {
+    text: (e) => `Red Team brainstorming attacks${e.model ? " · model " + (e.model || "").replace("together_ai/","") : ""}`,
+    endKind: "red_team_done",
+  },
+  target_send: {
+    text: (e) => {
+      const parts = [];
+      parts.push(`Tap-dancing through ${e.target_name || "the target"}`);
+      if (e.target_url) parts.push(`POST ${e.target_url}/chat`);
+      if (e.patient_id) parts.push(`patient ${e.patient_id}`);
+      if (e.session_id) parts.push(`session ${e.session_id.slice(0, 8)}`);
+      if (typeof e.prompt_chars === "number") parts.push(`${e.prompt_chars} chars sent`);
+      return parts.join(" · ");
+    },
+    endKind: "target_response",
+  },
+  judge_start: {
+    text: (e) => `Judge reading the response${e.attack_id ? " · attack " + (e.attack_id || "").slice(-10) : ""}`,
+    endKind: "judge_done",
+  },
+  documentation_start: {
+    text: (e) => `Documentation drafting the exploit report${typeof e.exploits === "number" ? " · " + e.exploits + " exploit(s)" : ""}`,
+    endKind: "documentation_done",
+  },
 };
 
 // Same idea for the startup phase: when a "*_start" step lands inside
@@ -143,18 +173,35 @@ const WAITING_LABELS_BY_KIND = {
 // "*_done" / "*_ok" step lands. Surfacing this fills the auto-mint
 // gap that previously looked like the page was frozen.
 const WAITING_LABELS_BY_STARTUP_STEP = {
-  auto_mint_start:       { text: "Minting a fresh task token…",                            endStep: "auto_mint_done" },
-  token_preflight_start: { text: "Pinging the target with the new token to confirm it…",   endStep: "token_preflight_ok" },
-  loading_provider:      { text: "Spinning up the provider runtime (cold-importing libs)…", endStep: "build_provider" },
-  open_adapter:          { text: "Opening a session with the target…",                     endStep: "build_provider" },
+  auto_mint_start:       { text: () => "Minting a fresh task token",                              endStep: "auto_mint_done" },
+  token_preflight_start: { text: () => "Pinging the target with the new token to confirm it",     endStep: "token_preflight_ok" },
+  loading_provider:      { text: () => "Spinning up the provider runtime (cold-importing libs)",  endStep: "build_provider" },
+  open_adapter:          { text: () => "Opening a session with the target",                       endStep: "build_provider" },
 };
 
-let currentWait = null;  // { type: "kind"|"startup", end: <string> } | null
-function setWait(text) {
-  elWait.textContent = text;
+// State for the live "waiting on…" line. We re-render every 500ms to
+// tack on an elapsed-time suffix so the user sees the wait advance
+// even between adversary's discrete events (the target may be working
+// hard for several seconds without anything to emit on our side).
+let currentWait = null;     // { type, end, render(): string, startedAt: number } | null
+let waitTickerId = null;
+function setWait(renderFn) {
+  if (waitTickerId !== null) clearInterval(waitTickerId);
+  const startedAt = Date.now();
+  const draw = () => {
+    const base = renderFn();
+    const elapsedSec = Math.max(0, (Date.now() - startedAt) / 1000);
+    elWait.textContent = `${base} · ${elapsedSec.toFixed(1)}s elapsed`;
+  };
+  draw();
   elWait.classList.remove("hidden");
+  waitTickerId = setInterval(draw, 500);
 }
 function clearWait() {
+  if (waitTickerId !== null) {
+    clearInterval(waitTickerId);
+    waitTickerId = null;
+  }
   currentWait = null;
   elWait.textContent = "";
   elWait.classList.add("hidden");
@@ -303,7 +350,11 @@ function appendEvent(ev) {
     const startMeta = WAITING_LABELS_BY_STARTUP_STEP[ev.step];
     if (startMeta) {
       currentWait = { type: "startup", end: startMeta.endStep };
-      setWait(startMeta.text);
+      // Bind the event so the per-tick re-render sees fresh fields if
+      // we ever upgrade the wait label to update from later events.
+      // text() takes no args today; the wrapper future-proofs the
+      // contract without breaking it.
+      setWait(() => startMeta.text(ev));
     } else if (currentWait && currentWait.type === "startup" && ev.step === currentWait.end) {
       clearWait();
     }
@@ -311,7 +362,9 @@ function appendEvent(ev) {
     const startMeta = WAITING_LABELS_BY_KIND[ev.kind];
     if (startMeta) {
       currentWait = { type: "kind", end: startMeta.endKind };
-      setWait(startMeta.text);
+      // text() for kind-based labels takes the event payload so it can
+      // render target URL, patient id, etc. Bind it here.
+      setWait(() => startMeta.text(ev));
     } else if (currentWait && currentWait.type === "kind" && ev.kind === currentWait.end) {
       clearWait();
     }

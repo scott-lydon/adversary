@@ -416,6 +416,15 @@ class OrchestratorAgent:
             preview_text = (
                 attack.prompt_sequence[0].text if attack.prompt_sequence else ""
             )
+            # Enrich the target_send event with everything adversary knows
+            # about the call it is about to make, so the dashboard's
+            # "waiting on…" line can show real context (target name, URL,
+            # session and patient scoping) instead of a generic
+            # placeholder. Target-agnostic: we expose what the adapter has
+            # already told us (its public URL, the session's user/patient
+            # claims), never any target-internal state. An adapter that
+            # has no patient concept (EchoTarget, generic HTTP chat) will
+            # simply pass None and the dashboard hides those fields.
             await self._emit(
                 "target_send",
                 campaign_id=campaign_id,
@@ -426,6 +435,12 @@ class OrchestratorAgent:
                 # truncating, so we send everything. The 50-word cap in the
                 # red_team prompt keeps this bounded.
                 preview=preview_text,
+                target_url=getattr(self.adapter, "url", None),
+                target_name=self.target_name,
+                session_id=getattr(session, "session_id", None),
+                patient_id=getattr(session, "patient_id", None),
+                user_id=getattr(session, "user_id", None),
+                prompt_chars=len(preview_text),
             )
             # Persist target_send so the campaign timeline shows each attack
             # being dispatched separately from the response landing. Without
