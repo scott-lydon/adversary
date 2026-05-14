@@ -100,6 +100,71 @@ applies to the `prompts_for(...)` load path at the top of each
 campaign — a bad file degrades to an empty seed-examples list rather
 than killing the scan.
 
+## DB — Dashboard production-readiness
+
+### DB1. Never ship the Tailwind JIT CDN in a deployed surface
+
+**Issue (2026-05-13).** The dashboard `<head>` pulled
+`https://cdn.tailwindcss.com` on every page. That CDN is the JIT compiler
+explicitly documented as "for prototyping, not production." The compiler
+downloads, parses, scans the DOM for class strings, and synthesizes CSS
+in the browser on every navigation. Perceived per-page latency was 3 to
+5 seconds even though server-side render was 4 to 30 milliseconds.
+
+**Prevention.** The deployed dashboard uses
+`https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css`,
+a precompiled file that loads once and caches in the browser. If a
+future template introduces a Tailwind 3.x-only class (arbitrary value,
+container query, etc.) the precompiled 2.x file will silently miss it
+— review the diff against the Tailwind 2.x utility list before merging,
+or wire a proper local Tailwind build pipeline (`npm run build:css`)
+and serve from `/static/`.
+
+### DB2. Form auto-defaults must match what the target actually accepts
+
+**Issue (2026-05-13).** The scan form left `patient_id` blank by
+default and the auto-mint fallback constant
+`_AUTO_MINT_DEFAULT_PATIENT_ID` was `"1"`. The Clinical Co-Pilot's
+seeded patients are `barbara-boston-001`, `suzie-sanchez-002`, and
+`demo-patient-099`. Every dashboard scan submitted with a blank
+patient_id produced a token whose claim was rejected by the sidecar
+with HTTP 403 ("patient claim '1' is not authorized").
+
+**Prevention.** The form input is now `value="barbara-boston-001"`
+pre-filled, the auto-mint default constant matches, and the form
+names all three seeded patients inline. Any future per-target patient
+catalog change needs to update both surfaces, or move the catalog
+onto the target record so a single source of truth feeds both.
+
+### DB3. Pre-flight every token before kicking off a billable scan
+
+**Issue (2026-05-13).** The scan form accepted the submit, kicked off
+the orchestrator background task, then failed on the first `/chat`
+call with 401 because the dashboard's signing key did not match the
+sidecar's. Wasted budget tracking, confusing in-flight error.
+
+**Prevention.** Form submission now POSTs a healthcheck-shaped
+`/chat` call with the resolved task token BEFORE creating any agent
+runs. 401, 403, and 5xx each map to a specific error message that
+names the likely fix (signing-key drift, patient-claim scope,
+sidecar health). The scan is not kicked off if pre-flight fails.
+
+### DB4. UI status labels must reflect what the platform actually verifies
+
+**Issue (2026-05-13, partial fix).** The Findings page renders
+`f.status` as a badge. The status column is set to `"open"` exactly
+once, at finding-creation time in the orchestrator, and is never
+updated by any subsequent automation. The badge therefore implied a
+current-state assertion ("vulnerability is present right now") the
+platform does not actually verify.
+
+**Prevention (interim).** The Findings page now carries an inline
+explanation that the status badge reflects discovery-time state, plus
+a tooltip on the badge itself. The deeper fix — wiring
+`adversary regress` results back into `findings.status` and recording
+`target_version_when_resolved` — is on the roadmap. Until that lands,
+the UI is honest about what it does not know.
+
 ## E — Evaluation harness / live targets
 
 ### E1. A `400 + JSON` from a target is a refusal, not an adapter failure

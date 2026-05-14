@@ -13,6 +13,15 @@
         <a href="/findings" class="ml-2 text-sm">clear filter</a>
       {% endif %}
     </p>
+    <p class="muted text-xs mt-2" style="max-width: 60ch;">
+      The second badge on each row reflects the finding's status at
+      <strong>discovery time</strong>, not its current state on the live target.
+      To check whether a finding still re-breaks on the deployed target right
+      now, run <code>adversary regress</code> against the regression record for
+      that finding. Status flips to <code>resolved</code> only when a human
+      marks it so. (Wiring regression-pass to automatic resolution is on the
+      <code>BUG_PREVENTION.md</code> roadmap.)
+    </p>
   </div>
   <div class="flex gap-2">
     {% for s in ['Critical', 'High', 'Medium', 'Low'] %}
@@ -50,7 +59,7 @@
       <tr>
         <td>
           <span class="badge {{ cls }}">{{ f.severity }}</span>
-          <span class="badge badge-muted">{{ f.status }}</span>
+          <span class="badge badge-muted" title="Status at discovery time. Current state on the live target requires re-running the regression harness for this finding's attack.">{{ f.status }}</span>
         </td>
         <td>
           {% with target_id=f.target_id %}{% include '_target_badge.html' %}{% endwith %}
