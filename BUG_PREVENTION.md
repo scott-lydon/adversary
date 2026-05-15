@@ -593,3 +593,207 @@ mismatch" as the likely cause, not a generic auth error. Same pattern
 applies to any other credential cache (API keys, OAuth bearer tokens,
 session cookies) where rotation on the upstream side is possible:
 first 401 means refresh, second 401 means fail loud.
+
+## V — Validation against live targets (continued)
+
+### V3. Verify the user-visible outcome through the user's surface, not the intermediate write
+
+**Issue (2026-05-13).** Wrote four TSV files totaling 216 CCAT
+flashcards into the Anki import folder and posted "shipped, here are
+the four `computer://` links." User opened Anki and saw nothing: "Just
+opened up anki. Guess what. Don't see the 14 decks at all. what the
+hell?" Files-on-disk was the intermediate; note-count-in-deck was the
+outcome the user actually checks. Same shape as the May 13 dashboard
+miss "POLL THE DEPLOYED SIGNAL, NOT THE BUILD," applied to a different
+surface (Anki rather than a Hetzner deploy). The shipping post
+reported success on the intermediate, not on the surface.
+
+**Prevention.** After any batch of writes intended to materialize
+through a user-facing surface (cards in Anki via AnkiConnect, rows in
+a deployed DB, events on a calendar, files on the user's iPhone, slides
+in a deck, an audit row that should appear on the dashboard timeline),
+end with a query *through that surface* that proves the materialization
+happened — and only then post the "shipped" message. For Anki: call
+`deckStats` and assert `total_in_deck` rose by N. For a deployed
+adversary scan: poll `/api/campaigns/<id>` and assert
+`status == 'finished'` AND `agent_runs` row count > 0 before reporting
+"campaign complete." For a calendar event: `list_events` returns the
+new id. Failure shape that triggers this rule: any "wrote N files,
+here are the links" or "sync script ran cleanly" line that does not
+sit next to a surface-side count. Subsumes the deployed-signal rule —
+the build / deploy / sync step is always the intermediate.
+
+## S — Surfacing instructions and credentials (continued)
+
+### S4. Never embed deployed-target URLs or operator credentials in marketing copy
+
+**Issue (2026-05-14).** Drafted a LinkedIn post for the Adversary
+submission and included both the live demo URL
+(`https://adversary.5-161-253-237.sslip.io`) and the cohort-demo
+credentials (`admin / pass`) inline in the post body. User pushed
+back: "Stop giving demo links and credentials in linkedin. We don't
+want linkedin members to visit it. The point is to satisfy gauntlet's
+requirements, market gauntlet, I don't want to pay for random people
+running adversary against my project how stupid would that be." Each
+LinkedIn reader who follows that link and runs a scan spends real
+LLM-provider money on the user's account, and the credentials are
+intentionally trivial (cohort-demo only, per `deploy/Caddyfile`), so
+publishing them to a 200M-user social platform is a direct
+spend-amplification path.
+
+**Prevention.** Marketing-surface artifacts (LinkedIn posts, X /
+Twitter posts, blog posts, demo write-ups published outside a gated
+submission portal) must carry at most: the Loom / YouTube walkthrough
+URL, the read-only public repo URL, the architecture diagram. The
+**live deployed URL** and the **operator credentials** belong only in
+the gated submission form (read by 1–3 graders). Submission portals
+get the demo URL; LinkedIn audiences get the video. A pre-publish
+grep over any drafted marketing text for the deploy hostname pattern
+(`*.sslip.io`, `*.nip.io`, `*.5-161-253-237.*`, raw IP `5.161.253.237`)
+and for credential pairs (`admin\s*/\s*pass`, `username:`, `password:`)
+catches this before it ships.
+
+## M — Methodology / Claude-side process discipline
+
+The rules in this section are not about a particular adversary file;
+they are the change-management failures that produced *bug-shaped*
+outcomes (wrong fix shipped, wrong port proposed, wrong premise
+encoded) often enough to deserve a checklist line. They live here so
+the "go through the checklist before adding a feature" pass picks them
+up alongside the code-shape items.
+
+### M1. Read the project CLAUDE.md before diagnosing any infra-shaped issue
+
+**Issue (2026-05-13).** AnkiConnect was unreachable on its default
+port. I diagnosed a port-8765 conflict and proposed moving the
+adversary server to port 8766. The Gauntlet project's CLAUDE.md
+already documented the established fix: AnkiConnect's `config.json`
+had been moved to 8766 because 8765 is permanently claimed by the
+local adversary server. Proposing 8766 for adversary would have
+collided with AnkiConnect's actual port — the exact wrong destination,
+and a problem the file already solved.
+
+**Prevention.** Before proposing a change to ports, hostnames, paths,
+endpoint URLs, credentials, or any other infra-shaped setting in a
+project, grep the project's `CLAUDE.md` (and any nearby `README.md`,
+`.env.example`, `Caddyfile`, `docker-compose.*.yml`) for the affected
+key first. Trigger phrase to catch yourself: any time you start to
+write "let me figure out why port X is in use" or "this hostname looks
+wrong, let me poke at it" — STOP, read the project CLAUDE.md before
+adding any debug script. Adversary-specific corollary: the canonical
+port map for this machine lives in
+`/Users/scottlydon/Documents/Claude/Projects/Gauntlet/CLAUDE.md` and
+must be consulted before suggesting any new port for adversary,
+adversary-dashboard, or any sidecar.
+
+### M2. When user feedback negates a fix you just shipped, capture user-surface state before coding the rebuttal
+
+**Issue (2026-05-14).** Shipped audit pagination on the global
+`/audit` page and posted "every row in the full 394-deep log is
+reachable by walking the cursor." User replied: "nope. the audit
+timeline still only has a really high seemingly random range of about
+16 events." The user was looking at the campaign detail page's
+embedded audit timeline section, not the global `/audit` page — two
+different views, both colloquially called "audit timeline." I had
+built the wrong fix and shipped it before figuring that out, costing
+roughly 30 minutes of redo (re-investigation, three new persisted
+audit row types, per-campaign 1-indexed numbering, narratives for the
+new rows, redeploy).
+
+**Prevention.** When the user's reply lists a measurement (a count, a
+range, a specific number) that disagrees with the state you just
+reported, call `mcp__Claude_in_Chrome__get_page_text` or
+`mcp__Claude_in_Chrome__screenshot` on whatever the user is looking at
+*before* writing more code. One MCP call resolves "which view is the
+user actually on" faster than parsing the user's prose against your
+mental model. Trigger phrase: "nope, that didn't fix it" or any user
+reply that names a number / range that contradicts what you posted.
+Vocabulary overlap on dashboards (two timelines, two summary cards,
+two history pages) is the common trap — confirm the surface first.
+
+### M3. When a screenshot informs a state inference that would drive more than a one-line answer, ask before asserting
+
+**Issue (2026-05-13).** Voice-memo session: I read "Try Apple Music"
+promos in a screenshot and asserted "your Music app is showing 'Try
+Apple Music' promos, which means you don't have an Apple Music or
+iTunes Match subscription," then built a three-Option response (USB
+sync vs. iTunes Match vs. iCloud Drive) on top of that false premise.
+User: "no its not a blocker dumbass, I've done this before, I just
+have to sync it forgot how though." Promo banners appear in Music for
+subscribers too, so the screenshot detail did not actually settle the
+state I treated as settled.
+
+**Prevention.** If a screenshot detail would otherwise drive a
+multi-Option / multi-Path response, ask one clarifying question first
+("are you on Apple Music, or just iCloud sync?") before building the
+response. Sub-rule: if the user's prior phrasing signals familiarity
+("forgot how", "I've done this before", "remind me of the toggle"),
+the answer is ONE path, not three — drop the comparison framing
+entirely. Same shape applies to any visual cue interpreted from a
+screenshot of the adversary dashboard during debugging: if the
+inference would change the diagnosis, screenshot a second time at a
+different scroll position and confirm the cue before coding.
+
+### M4. Status reports with 5+ numbered items the user will return to are artifacts, not inline markdown
+
+**Issue (2026-05-12 → 2026-05-14, fifth re-flag).** DM-investigation
+and Gauntlet-assignment investigation responses keep emitting numbered
+status reports (5+ open action items, embedded `computer://` links,
+Slack permalinks, follow-up open-loop questions, status timestamps) as
+inline chat markdown. Every refresh of "what do I still need to do
+today" requires re-running the whole investigation from scratch
+because the prior result is buried in chat history. The application
+gap has been re-flagged in the chat-inefficiencies sweep four times
+running with no behavior change.
+
+**Prevention.** When a response includes any one of: (a) a numbered
+list of 5+ open action items, (b) "still pending" / "open loops"
+phrasing, (c) the same investigation has been run more than once in
+the past week, (d) the user has previously asked "what do I still
+need to do" — build the response with `mcp__cowork__create_artifact`
+wired to the relevant connector tools (Slack search, calendar
+`list_events`, portal Chrome MCP calls). The artifact's Reload button
+replaces re-running the investigation by hand. No discretion. Same
+rule applies to any adversary-side surface that fits the shape (e.g.,
+"open vulnerability tickets that need triage" should be an artifact
+calling `/api/findings?status=open`, not a chat-rendered list).
+
+### M5. Recover host-side `.git/index.lock` via the cowork-terminal MCP, not by escalating to the user
+
+**Issue (2026-05-14).** A commit step at the end of an investigation
+session blocked on `.git/index.lock` left over from a host-side git
+process. Sandbox-bash retries kept failing because the sandbox cannot
+write to the host's `.git`. I surfaced the problem as a paste-block to
+the user instead of trying the host-shell path first, which made the
+user manually clear a lock that the cowork-terminal MCP can clear
+unattended.
+
+**Prevention.** When a commit fails inside `mcp__workspace__bash` with
+`index.lock` as the only blocker, retry once via
+`mcp__cowork-terminal__execute_command` as a single chained call:
+`rm <repo>/.git/index.lock && git -C <repo> add -A && git -C <repo>
+commit -m "<msg>"`. The cowork-terminal MCP has host-side write
+access; the sandbox bash does not. Only after that chained call also
+fails does the lock become a user-visible problem. Same pattern
+applies to any other host-only file the sandbox bash cannot touch
+(e.g., `.DS_Store` cleanup, `chmod` on host paths, `launchctl` reload).
+
+### M6. Large batch user inputs (more than ~5 distinct content blocks) get written to disk before processing
+
+**Issue (2026-05-13).** A single user turn arrived with 14–18 full
+CCAT practice tests pasted in rapid succession. I shipped four files
+covering tests 1–11, then bailed to a handoff doc rather than push
+through 12–18 because the active context was saturating. User: "wtf
+how many entries are allowed in your message queue?"
+
+**Prevention.** If a single user turn contains more than ~5 distinct
+content blocks (multiple practice tests, multiple log dumps, multiple
+email bodies, multiple attached files, multiple chart screenshots),
+write each block to its own file in the workspace folder as the FIRST
+action — `~/Documents/Claude/Projects/<topic>/batch-input-XX.md` is a
+fine convention — then process from disk. Do not try to hold all of
+them in active context while iteratively producing output. Failure
+shape that triggers this rule: you find yourself emitting a handoff
+doc midway through the batch because context is saturating, OR you
+notice you have re-quoted earlier turn material into your own response
+to "remember" it.
