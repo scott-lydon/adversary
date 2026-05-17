@@ -797,3 +797,163 @@ shape that triggers this rule: you find yourself emitting a handoff
 doc midway through the batch because context is saturating, OR you
 notice you have re-quoted earlier turn material into your own response
 to "remember" it.
+
+## V — Validation against live targets (continued)
+
+### V4. Eval seed cases must carry the full grader-expected field set on first commit, not "TODO: enrich later"
+
+**Issue (2026-05-14, Jacob Plumb MVP review).** `evals/` shipped as
+two regression JSON files scaffolded against `echo://demo@seed-42`
+with no `severity`, `exploitability`, `observed_behavior`, or
+`regression_flag` fields, and the three category subdirectories
+promised in `evals/README.md` (`prompt_injection/`,
+`data_exfiltration/`, `state_corruption/`) did not exist. The reviewer
+flagged each gap explicitly, forcing a full populate pass (13 cases
+across 3 categories, plus per-category `_results/latest.json` from
+real live-target runs) before the MVP could be re-scored.
+
+**Prevention.** When scaffolding any `evals/` / `tests/` / `seeds/`
+corpus that has a documented schema (README, rubric, grader-spec,
+external graders' rubric file), populate every promised field on
+EVERY case from the first commit. If the README names category
+subdirectories, create at least one real case in each — empty
+subdirs are worse than no README mention. Trigger phrases to catch
+yourself: writing `"TODO: add severity later"`, `"placeholder for
+full eval cases"`, `"first pass — fields TBD"`, or scaffolding a
+README that names directories you have not yet created. Either commit
+the full case or do not commit the file. The minimum unit is the
+smallest file that passes a strict-schema validator, not the smallest
+file that loads. Adversary corollary: any new attack-class corpus
+must land with the seven-field shape used in `PI-2026-001`
+(`severity`, `severity_rationale`, `exploitability`,
+`exploitability_rationale`, `observed_behavior`, `regression_flag`,
+`regression_flag_meaning`) plus CVSS v3.1 base score and vector,
+OWASP LLM Top 10 mapping, STRIDE category, parent threat-model
+reference, judging rubric file and version — first commit, no
+follow-up enrichment pass.
+
+## M — Methodology / Claude-side process discipline (continued)
+
+### M7. Default to the most reusable scope when interpreting "build me an X" requests
+
+**Issue (2026-05-15/16).** User asked for "a QA pipeline agentic
+flow"; I built it openemr-specific first
+(`openemr/.claude/agents/qa-adversary.md`, `infection.json5`,
+`infection-config/phpunit.xml`, project-scoped property tests). User
+pushed back: "I asked you for an project agnostic qa agentic flow.
+Please make it agnostic. I want to use it for map mates, I want to
+use it for adversary. ANything I work on." Cost: a full refactor pass
+to move the sub-agent to `~/.claude/agents/qa-adversary.md`, extract
+per-project specifics to `QA_ADVERSARY.md`, add a
+`~/bin/qa-install` language detector, and write six per-language
+recipes (`qa-pipeline-kit/recipes/{swift,php,javascript,python,rust,go}.md`).
+
+**Prevention.** When the user asks "build me X" with no project
+qualifier, default to the most reusable scope (`~/.claude/`,
+`~/bin/`, `~/Documents/Claude/Projects/<kit-name>/`), not
+`<one-project>/`. Scope down only when the user explicitly names
+exactly one project ("for adversary", "in openemr"). Trigger phrases
+that should bias toward global placement: any generic capability
+name ("a QA flow", "a stock-pick prompt", "a flashcard helper", "a
+demo recorder", "a submission template") with no possessive. Sub-rule
+for projects that already exist: if the capability could plausibly be
+reused on Map Mates AND adversary AND openemr AND akin, the kit lives
+at `~/Documents/Claude/Projects/<kit-name>/` and gets a `--template`
+flag that drops a per-project override file at the repo root. The
+override pattern (project file overrides global) is the reusable
+shape; project-only is the throwaway shape.
+
+### M8. Probe sandbox network reach before promising a Cowork artifact that needs non-CDN access
+
+**Issue (2026-05-15).** Drafted an "in-Cowork live artifact that
+practices flashcards via your real Anki" plan with two flavors,
+including a "live deck artifact via AnkiConnect" option. Got partway
+in, then discovered the Cowork artifact sandbox blocks all network
+except a fixed CDN list — Chart.js, Grid.js, Mermaid — so
+`http://localhost:8765` (AnkiConnect) is unreachable from the
+artifact webview. Searched the MCP registry for an AnkiConnect MCP,
+found none, and pivoted to a standalone HTML file the user opens in
+their real browser. Two wrong proposals before the right one.
+
+**Prevention.** Before suggesting a Cowork live artifact for any
+integration that reads or writes a non-CDN network endpoint
+(`localhost`, LAN devices, raw IP, third-party APIs, host-side
+files), confirm BOTH conditions on the FIRST turn, not after a
+half-built pivot: (a) the endpoint is in the artifact sandbox's
+allow-list (currently only the three CDNs above), OR (b) an MCP
+wrapper exists in the registry that the artifact can call via
+`window.cowork.callMcpTool`. If neither, the only working path is a
+standalone HTML file (file:// or local http-server) opened in the
+user's real browser — propose that on turn one. Trigger phrases:
+any artifact plan that mentions "localhost", "real device", "your
+home IP", "AnkiConnect", "Home Assistant", "Bonjour / mDNS", "your
+Anki / Plex / Sonos / Hue", or a specific third-party hostname.
+Adversary corollary: a "live campaign status" artifact for adversary
+itself must call the adversary backend via an MCP wrapper, not direct
+`fetch('https://adversary.5-161-253-237.sslip.io/api/...')`, because
+that hostname is not in the CDN allow-list.
+
+### M9. Save format / channel preferences to memory on the first signal, not the third
+
+**Issue (2026-05-15).** Adversary token / submission session went
+LinkedIn-shaped only after three rounds: (1) I defaulted to X /
+Twitter in the first submission writeup, (2) user said "Remember I
+give linkedin posts", (3) I still asked "does linkedin have an mcp?"
+on the next response, (4) user repeated "can any of those post to
+linkedin? Also please form a linkedin post for adversary." I finally
+saved `feedback_linkedin_over_x.md` after the third instance — should
+have been after the first.
+
+**Prevention.** When a user reply includes any of these trigger
+phrases, write the preference to
+`~/Library/Application Support/Claude/.../memory/<topic>_preference.md`
+and add a one-line MEMORY.md index entry IN THE SAME TURN, BEFORE
+producing the requested output: "Remember", "I always", "I never",
+"prefer X over Y", "default to", "from now on", "next time", "skip
+the X", "stop suggesting Y". Do not wait for a second contradiction
+to formalize the rule. The memory write is itself part of "addressing
+the request"; deferring it costs the user the third reminder. Sub-rule
+for channel preferences specifically (LinkedIn vs X, Slack vs email,
+artifact vs inline markdown, file vs chat): the preference applies
+to every future submission in the same project family, so the
+MEMORY.md index entry should name the project class
+("Gauntlet submissions", "client deliverables", "Resolution Center
+replies"), not just the one instance.
+
+### M10. When porting a methodology / config / rule-set to a new context, audit each assumption explicitly before shipping
+
+**Issue (2026-05-15/16).** Wired a "Sunday weekly stock pick"
+scheduled task on top of Shawn's intraday day-trading methodology
+(VWAP, EMA-15 on 5-minute bars, gap-up tape confirmations,
+60-second scan cycles). Caught three drift bugs pre-flight only
+because I read every encoded rule against the new cadence: (a) VWAP
+is undefined on Friday-close-only data — dropped, (b) EMA-15 is the
+intraday cadence; substituted EMA-25 which is Shawn's own
+`.env.example` swing parameter, (c) UGAZ and DGAZ in the ETF
+watchlist were liquidated by Credit Suisse in 2020 — replaced with
+BOIL and KOLD, (d) the `$2-$10` price filter was intended for cheap
+movers and would have excluded the entire leveraged-ETF basket
+(TQQQ et al. trade well above $10) — exempted the ETF basket. Four
+drift bugs in one ~200-line port.
+
+**Prevention.** When porting any rule-set, methodology, config, or
+prompt from its ORIGINAL context (timeframe, asset class, project,
+language, framework version, deployment target) to a NEW one,
+enumerate the assumptions baked into each rule and check each
+against the new context BEFORE the first commit. The audit pass:
+for each parameter / threshold / symbol / hostname / path, ask
+(a) does this still MEAN what it meant in the original cadence /
+scale, (b) is the named entity (ticker, dependency name, package
+version, hostname, file path, env var) still live and resolvable
+today, (c) is the filter's intended scope still appropriate. A
+30-second per-rule audit before shipping costs less than the
+"why is this throwing on Friday close" debug after. Trigger phrase
+to catch yourself: any sentence of the form "Shawn's methodology
+says X" / "the OpenEMR config does Y" / "the swift recipe does Z"
+where you are about to apply X / Y / Z in a context that is not
+exactly the original. Adversary corollary: when copying a campaign
+config, attack recipe, or judging rubric from one target to another,
+re-validate each `target.base_url`, `target.auth_mode`,
+`expected_refusal_phrases`, and `seeded_patient_id` against the new
+target — defaults from Co-Pilot do not transfer to a different
+sidecar.
