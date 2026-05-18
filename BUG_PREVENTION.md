@@ -957,3 +957,175 @@ re-validate each `target.base_url`, `target.auth_mode`,
 `expected_refusal_phrases`, and `seeded_patient_id` against the new
 target — defaults from Co-Pilot do not transfer to a different
 sidecar.
+
+## M — Methodology / Claude-side process discipline (continued)
+
+### M11. Q-and-A pair generation: the side meant to be guessed must not contain the answer
+
+**Issue (2026-05-17).** Built a "Gauntlet Faces" Anki deck (117 cards,
+234 with reverses) and shipped it with the face image AND the
+person's name on the front, with the description on the back. User
+corrected: "Front should have the image and a description of the
+unique characteristics of the person. The back should have their
+name. That way I can guess the characteristics when given the name.
+if the image is on the back then that would give me the answer to
+the characteristics." Required a full rebuild of all 117 notes and
+a re-sync to AnkiWeb.
+
+**Prevention.** When generating any Question / Answer pair —
+flashcards, quizzes, drills, even chat-style "guess the X" widgets
+— the prompt side (Front, Question, Stimulus) MUST contain only the
+material the user is being asked to recall ABOUT. The recall target
+itself (the term being drilled, the name, the value being guessed)
+lives ONLY on the answer side (Back, Answer, Reveal). Before
+emitting the first card, write the recall direction out loud as a
+sentence: "Given <front contents>, recall <back contents>." If that
+sentence is trivial because the front already shows what the user
+is supposed to produce, the card direction is wrong. For
+reversible card types (Anki "Basic and reversed"), this means BOTH
+directions must produce a non-trivial recall — verify by mentally
+running the swap before generating. Trigger phrases: "make a
+deck", "flashcards", "front/back", "guess the", "recall", "quiz me
+on", "drill me on". Sub-rule for image-bearing cards: the image
+counts as content on whichever side it appears, so a portrait on
+the front means the front IS testing visual recognition of the
+person, not their name; do not also paste the name on that side.
+
+### M12. Scheduled trading tasks: define "stale order" by market-session events, not wall-clock
+
+**Issue (2026-05-17).** The `shawn-weekly-stock-picker` Sunday run
+opened, found three `accepted` bracket orders from an earlier
+same-day run (SQQQ / TZA / SOXS GTC limits sitting waiting for
+Monday's open), classified them as stale, and canceled all three.
+The orders were perfectly valid — markets had not opened since
+they were placed. User correction: "the three orders an earlier
+run today placed (SQQQ, TZA, SOXS) sat in `accepted` status all
+weekend and were canceled at the start of this run — which is
+exactly the behavior you just told me to stop doing. They were
+perfectly valid GTC limits waiting for Monday's open." Required a
+SKILL.md rewrite to redefine stale.
+
+**Prevention.** Any "is this order stale / expired / should I
+cancel" predicate inside a scheduled trading task MUST be defined
+in market-clock terms (regular-trading-hours sessions elapsed, RTH
+closes that occurred at or above `limit_price`, market days since
+`submitted_at`), NEVER in wall-clock terms (hours since placed,
+"older than today", "from a previous run"). The default action on
+finding a pending GTC order from an earlier same-day re-run is
+KEEP it, not cancel it — re-running a Sunday task three times on
+Sunday should not churn the book three times. A concrete shape
+that works: an order is stale iff `(rth_sessions_elapsed >= 1) AND
+(max(session_high since submitted_at) >= limit_price) AND
+(status == "accepted" or "new")`. Trigger phrases: "stale orders",
+"old orders", "previous run", "cancel all open", "fresh slate",
+"re-fire" — any of these inside a market-touching task is a
+prompt to re-check the staleness predicate against market-clock,
+not wall-clock. Same shape applies to options, futures, crypto
+(use the venue's continuous-session boundaries), and any future
+market integration.
+
+### M13. When the user names a bottleneck and asks for a recommendation, scaffold the build instead of gating on "say the word"
+
+**Issue (2026-05-17).** User opened the iPhone VoIP demo session
+with "one bottleneck in my project has been me finding the time to
+context switch and boot up two iphones in order to demonstrate
+voip functionality working in my project. What do you recommend...
+?" Response gave a detailed architectural recommendation
+(two-iPhone rig, OBS WebSocket, Swift command-line driver, Claude
+in Chrome for Resolution Center) and ended with: "Say the word and
+I will scaffold it." The chat-inefficiencies sweep flagged this as
+the wrong shape: "you called it a 'bottleneck' — that's the exact
+preference-block signal for 'automate it for me.' Right move:
+scaffold the Swift CLI + DemoScenario enum + new server endpoint,
+surface what's left as a checklist (cable, OBS install, cert).
+Stopping at 'I'd be happy to build it if you want' adds a
+round-trip the ADD-friendly preferences are designed to remove."
+
+**Prevention.** When the user's request contains any of these
+phrases — "bottleneck", "context-switch tax", "I keep having to",
+"I never get around to", "automate this", "what do you recommend
+for", "this is killing me" — the preferred response is to build
+the first usable cut immediately (scaffold the code, create the
+files, wire the obvious integrations) AND surface the hand-off
+checklist for the human-only steps (physical hardware, OAuth
+sign-in, certificate purchase, account creation), NOT to gate the
+build behind "say the word and I will". The user's ADD-friendly
+preference block says explicitly: "prefer automated or definitive
+solutions" and "Avoid back and forth". An offer-to-build sentence
+at the end of a recommendation IS the back-and-forth the
+preference block was written to eliminate. Sub-rule: if the build
+takes >200 lines of code or touches multiple repos, scaffold the
+smallest end-to-end slice (one demo scenario, one endpoint, one
+recipe) so the round-trip is "review what shipped" rather than
+"approve the plan". Same applies to skills, scheduled tasks, MCP
+wrappers, and CLI tools.
+
+### M14. Recurring report tasks must surface the headline delta in the chat / notification body, not only behind a file link
+
+**Issue (2026-05-17).** `shawn-weekly-stock-picker` initially
+returned a Sunday-evening chat notification containing only a link
+to `weekly-picks/<date>.md`. User asked for a Net Worth Update
+block and Last Week Recap to be added INSIDE the chat notification
+itself, not just to the report file: "The chat notification on
+task completion now also includes a compact version of both new
+sections, not just the file link, so the Sunday-evening push has
+the net-worth delta visible without opening the report." This was
+the second round of changes to the same task in one weekend; the
+first round added the sections to the report but not the
+notification body.
+
+**Prevention.** For any scheduled / recurring task that produces
+a report file, the chat notification (or `prompt-suggestion`
+output, or status-artifact, or Slack message) MUST contain the
+top-line delta INLINE: the dollar / percent change, the count
+delta, the pass/fail verdict, the "1 issue found" headline. The
+file link is a deep-dive, not the primary surface. A correct
+notification body for a weekly-numbers task includes (a) the
+single most important number this period, (b) the same number
+last period, (c) the delta, (d) a one-sentence narrative of what
+drove it. For pass/fail health checks, the body includes the
+verdict word ("PASS" / "FAIL" / "WARN"), the count of surfaces
+checked, and the count of failures. The file link comes AFTER
+those. Trigger phrases when reviewing a task SKILL.md before
+shipping: "the notification will say", "the chat message will
+include", "on completion, post" — verify the body, not just the
+attachment. Same rule for `prompt-suggestion` widgets fired from
+scheduled tasks: the widget body must contain the delta, not just
+"click to view".
+
+### M15. Helper text and code-path defaults must be edited together; treat instructional strings as part of the code change
+
+**Issue (2026-05-17).** Uptime check of the adversary dashboard
+caught a doc inconsistency: "the target detail page's collapsible
+says 'mint one yourself ... and paste it', but the README and the
+auto-mint path both say leave it blank. Blank works (verified —
+got campaign `camp-20260517-192156-000-2b453c`)." Three places
+describe the same field (collapsible helper text in the UI, README
+instructions, auto-mint code path). The auto-mint code-path was
+added later; the collapsible helper text was left behind. A user
+following the on-page instructions gets a worse experience than a
+user following the README.
+
+**Prevention.** When a code path changes its default behavior
+(required-input → auto-generated, manual-step → automated,
+allowed-values shrinking or expanding), the change is NOT complete
+until every user-visible string describing that path has been
+updated in the same commit. Grep targets for any change to a form
+field's required-ness, allowed values, default behavior, or
+required-input shape: (a) the template that renders the field
+(`<input>` placeholders, `<label>` text, the `aria-describedby`
+target), (b) every collapsible / tooltip / inline-help string
+near the field, (c) the README section that documents the field,
+(d) the API doc / OpenAPI description / schema doc, (e) any
+walkthrough video transcript or operator-onboarding doc,
+(f) any test fixture or seed file that includes the field. The
+commit message lists every file touched; if the diff doesn't span
+all of them, the change is half-shipped. Sub-rule for collapsibles
+and tooltips specifically: they are the most-forgotten surface
+because they're hidden behind a click and don't break tests when
+stale. Add a "helper-text audit" line to the project's PR
+template so the reviewer is forced to look at every collapsible
+near a touched field. Adversary corollary: the target-detail page
+collapsible at `/targets/<id>` describing the `task_token` field
+needs to say "leave blank to auto-mint" to match the auto-mint
+code path and the README.
