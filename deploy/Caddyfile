@@ -42,21 +42,31 @@ adversary.5-161-253-237.sslip.io {
     # /__enter sets the gate cookie and redirects to "/". A single visit
     # here authenticates the browser for a year.
     #
-    # `route` (not `handle`) is required here so the directives run in
-    # source order: `header` queues Set-Cookie on the response, then
-    # `redir` emits the 302 with Location: /. With `handle`, Caddy sorts
-    # children by its global directive order and the redirect lost its
-    # status (verified empirically 2026-06-22: `handle` produced 200 +
-    # Set-Cookie with no Location header; `route` produces 302 + both).
+    # Why `handle` + explicit `header Location` + `respond 302` instead of
+    # `redir / 302`:
+    #   - `handle` is mutually exclusive — only the matching block runs,
+    #     so the catch-all landing handler below cannot overwrite this
+    #     response. `route` looked tempting (preserves source order) but
+    #     does NOT terminate the request, so the catch-all fired on top
+    #     and turned the 302 into the landing page (observed 2026-06-22).
+    #   - Inside `handle`, Caddy sorts children by global directive order:
+    #     `header` (order ~117) runs before `respond` (order ~149). So
+    #     `header Set-Cookie ...` and `header Location "/"` queue their
+    #     headers, then `respond 302` writes the 302 status with both
+    #     headers attached.
+    #   - `redir / 302` inside `handle` did NOT produce a 302 in testing
+    #     (got 200 + Set-Cookie with no Location). Using `header Location`
+    #     + `respond 302` is more explicit and works reliably.
     @enter path /__enter
-    route @enter {
+    handle @enter {
         # HttpOnly: JS in the dashboard cannot read the cookie (defense in
         # depth against future XSS). Secure: only sent over TLS. SameSite=
         # Lax: cookie survives top-level navigations from external links
         # (Gauntlet submission form, README, etc.) but is not sent on
         # cross-site sub-requests.
         header Set-Cookie "adv_gate=2026-grader; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Lax"
-        redir / 302
+        header Location "/"
+        respond 302
     }
 
     # Cookie present: proxy through to the dashboard.
