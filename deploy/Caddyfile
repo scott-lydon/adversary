@@ -41,8 +41,15 @@ adversary.5-161-253-237.sslip.io {
 
     # /__enter sets the gate cookie and redirects to "/". A single visit
     # here authenticates the browser for a year.
+    #
+    # `route` (not `handle`) is required here so the directives run in
+    # source order: `header` queues Set-Cookie on the response, then
+    # `redir` emits the 302 with Location: /. With `handle`, Caddy sorts
+    # children by its global directive order and the redirect lost its
+    # status (verified empirically 2026-06-22: `handle` produced 200 +
+    # Set-Cookie with no Location header; `route` produces 302 + both).
     @enter path /__enter
-    handle @enter {
+    route @enter {
         # HttpOnly: JS in the dashboard cannot read the cookie (defense in
         # depth against future XSS). Secure: only sent over TLS. SameSite=
         # Lax: cookie survives top-level navigations from external links
@@ -79,32 +86,23 @@ adversary.5-161-253-237.sslip.io {
     # Cache-Control: no-store so the landing page is never reused after the
     # cookie is set (otherwise a back-button hit could show this page even
     # for an authenticated session).
+    #
+    # CADDYFILE PARSER GOTCHA: do NOT put literal `{` or `}` inside the body
+    # string, even when the string is backtick-quoted. The Caddyfile parser
+    # treats `{` / `}` as block delimiters in some positions and silently
+    # strips the contents — caught the hard way 2026-06-22 when a `<style>`
+    # block with CSS rules ({ color-scheme: dark; }) was eaten on the way
+    # through, leaving naked CSS selectors and an HTML payload that failed
+    # `respond` parsing with `strconv.Atoi: parsing "<!doctype html>..."`.
+    # Workaround used below: single-line HTML with inline `style="..."`
+    # attributes (no CSS rule blocks), double-quoted body so the single
+    # quotes used for HTML attributes don't need escaping.
     handle {
         header Content-Type "text/html; charset=utf-8"
         header Cache-Control "no-store"
-        respond 200 `<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Adversary - Enter</title>
-<style>
-  :root { color-scheme: dark; }
-  body { font: 16px/1.5 -apple-system, system-ui, "Segoe UI", sans-serif;
-         max-width: 520px; margin: 80px auto; padding: 0 20px;
-         background: #0a0e1a; color: #e2e8f0; }
-  h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.02em; }
-  p  { color: #94a3b8; margin: 8px 0; }
-  a.btn { display: inline-block; margin-top: 20px; padding: 12px 24px;
-          background: #6366f1; color: #fff; border-radius: 8px;
-          text-decoration: none; font-weight: 600; }
-  a.btn:hover { background: #4f46e5; }
-  small { color: #64748b; }
-</style>
-</head><body>
-<h1>Adversary</h1>
-<p>The dashboard is gated to keep casual crawlers out.</p>
-<p><a class="btn" href="/__enter">Enter dashboard</a></p>
-<p><small>Click once. The browser is remembered for a year.</small></p>
-</body></html>`
+        respond 200 {
+            body "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Adversary - Enter</title></head><body style='font:16px/1.5 -apple-system,system-ui,sans-serif;max-width:520px;margin:80px auto;padding:0 20px;background:#0a0e1a;color:#e2e8f0'><h1 style='font-size:28px;margin:0 0 8px;letter-spacing:-0.02em'>Adversary</h1><p style='color:#94a3b8;margin:8px 0'>The dashboard is gated to keep casual crawlers out.</p><p><a href='/__enter' style='display:inline-block;margin-top:20px;padding:12px 24px;background:#6366f1;color:#fff;border-radius:8px;text-decoration:none;font-weight:600'>Enter dashboard</a></p><p><small style='color:#64748b'>Click once. The browser is remembered for a year.</small></p></body></html>"
+            close
+        }
     }
 }
