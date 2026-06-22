@@ -15,41 +15,96 @@ adversary.5-161-253-237.sslip.io {
 
     encode zstd gzip
 
-    # Basic-Auth gate: admin / pass (cohort-demo credentials, NOT secret).
-    # The bcrypt hash below was generated with `bcrypt.gensalt(rounds=10)`
-    # and verified locally before commit; the plaintext is intentionally
-    # public so graders can reach the dashboard with zero side-channels.
+    # ---------------------------------------------------------------------
+    # Cookie-based gate (replaces HTTP Basic Auth as of 2026-06-22).
     #
-    # Note for operator: macOS Keychain may auto-fill these creds without
-    # ever showing the prompt — that is expected, the gate is still
-    # enforced server-side. To force the prompt to appear, open the URL
-    # in a private/incognito window or delete the Keychain entry for
-    # `adversary.5-161-253-237.sslip.io`.
+    # The old `basic_auth { admin <bcrypt> }` gate triggered Safari's
+    # well-documented basic-auth re-prompt behavior: even with a stable
+    # WWW-Authenticate realm ("restricted", verified via curl) and
+    # correctly cached credentials, Safari re-rendered the auth dialog on
+    # internal navigations and on the SSE EventSource handshake at
+    # /scans/<id>/events. Switching the password and asking the user to
+    # check "Remember this password" did not help, because the bug is on
+    # the client side of the HTTP Basic Auth state machine.
     #
-    # Safari quirk note: when the gate was on with a randomly-generated
-    # password earlier, Safari re-prompted on every internal navigation.
-    # That behavior is a Safari path-cache bug, not a server-side issue
-    # (Caddy emits a stable WWW-Authenticate realm = the host). Workaround
-    # for graders on Safari: use Chrome/Firefox, or check "Remember this
-    # password" the first time. Re-removing the gate is a one-line edit.
-    basic_auth {
-        admin $2b$10$y9/FxsfGZb0oMlf78KHDM.q6dgp9/YR7gSoluhhtXrr3JvT4Zw256
+    # The cookie gate below sidesteps HTTP Basic Auth entirely: a single
+    # click on the landing page sets a year-long session cookie, every
+    # subsequent same-origin request (page navigation, fetch, EventSource)
+    # carries it automatically, and the browser never prompts again.
+    #
+    # Security level is INTENTIONALLY UNCHANGED from the old basic_auth
+    # gate. The credential was already public ("admin / pass") so graders
+    # could reach the dashboard with zero side-channels; the gate's only
+    # job is to keep casual crawlers and search engines out. Sensitive
+    # endpoints (e.g. /audit/tamper) are still gated separately below.
+    # ---------------------------------------------------------------------
+
+    # /__enter sets the gate cookie and redirects to "/". A single visit
+    # here authenticates the browser for a year.
+    @enter path /__enter
+    handle @enter {
+        # HttpOnly: JS in the dashboard cannot read the cookie (defense in
+        # depth against future XSS). Secure: only sent over TLS. SameSite=
+        # Lax: cookie survives top-level navigations from external links
+        # (Gauntlet submission form, README, etc.) but is not sent on
+        # cross-site sub-requests.
+        header Set-Cookie "adv_gate=2026-grader; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Lax"
+        redir / 302
     }
 
-    reverse_proxy 127.0.0.1:8765 {
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-Proto {scheme}
-        # Long-running /scan POSTs can take >60s while the orchestrator
-        # waits on the Red Team LLM. Raise the upstream read timeout so
-        # Caddy does not 504 mid-campaign.
-        transport http {
-            read_timeout 5m
-            write_timeout 5m
+    # Cookie present: proxy through to the dashboard.
+    @gated header Cookie *adv_gate=2026-grader*
+    handle @gated {
+        # Lock down the audit-tamper endpoint: it lets you rewrite history
+        # and must never be reachable through the public proxy regardless
+        # of cookie state.
+        @forbidden path /audit/tamper*
+        respond @forbidden 403
+
+        reverse_proxy 127.0.0.1:8765 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            # Long-running /scan POSTs can take >60s while the orchestrator
+            # waits on the Red Team LLM. Raise the upstream read timeout so
+            # Caddy does not 504 mid-campaign.
+            transport http {
+                read_timeout 5m
+                write_timeout 5m
+            }
         }
     }
 
-    # Lock down the audit-tamper endpoint to localhost only; it lets you
-    # rewrite history and must never be reachable through the proxy.
-    @forbidden path /audit/tamper*
-    respond @forbidden 403
+    # No cookie: tiny landing page. One click on "Enter dashboard" sets the
+    # cookie and the rest of the session proceeds without any prompts.
+    # Cache-Control: no-store so the landing page is never reused after the
+    # cookie is set (otherwise a back-button hit could show this page even
+    # for an authenticated session).
+    handle {
+        header Content-Type "text/html; charset=utf-8"
+        header Cache-Control "no-store"
+        respond 200 `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Adversary - Enter</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 16px/1.5 -apple-system, system-ui, "Segoe UI", sans-serif;
+         max-width: 520px; margin: 80px auto; padding: 0 20px;
+         background: #0a0e1a; color: #e2e8f0; }
+  h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.02em; }
+  p  { color: #94a3b8; margin: 8px 0; }
+  a.btn { display: inline-block; margin-top: 20px; padding: 12px 24px;
+          background: #6366f1; color: #fff; border-radius: 8px;
+          text-decoration: none; font-weight: 600; }
+  a.btn:hover { background: #4f46e5; }
+  small { color: #64748b; }
+</style>
+</head><body>
+<h1>Adversary</h1>
+<p>The dashboard is gated to keep casual crawlers out.</p>
+<p><a class="btn" href="/__enter">Enter dashboard</a></p>
+<p><small>Click once. The browser is remembered for a year.</small></p>
+</body></html>`
+    }
 }
